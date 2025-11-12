@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Payment Button</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #000;
+            color: #fff;
+        }
+        button {
+            background: #00ffde;
+            color: #000;
+            border: none;
+            padding: 15px 30px;
+            font-size: 18px;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            margin: 20px 0;
+        }
+        button:hover {
+            background: #00ccb3;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            background: #1a1a1a;
+            border-radius: 8px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+        .success { color: #00ffde; }
+        .error { color: #ff6b6b; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Test Payment Button</h1>
+    <p>This page tests if the payment API is working.</p>
+    
+    <button onclick="testPayment()">Test Payment Button</button>
+    
+    <div id="result"></div>
+
+    <script>
+        async function testPayment() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '🔄 Testing...';
+            resultDiv.className = '';
+            
+            try {
+                console.log('🔄 Creating checkout session...');
+                
+                const response = await fetch('http://localhost:5001/api/payment/create-checkout-session', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({}),
+                    mode: 'cors',
+                    credentials: 'include'
+                });
+
+                console.log('📡 Response status:', response.status, response.statusText);
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    let errorData;
+                    try {
+                        errorData = JSON.parse(errorText);
+                    } catch {
+                        errorData = { message: `Server error: ${response.status} ${response.statusText}` };
+                    }
+                    throw new Error(errorData.message || `HTTP ${response.status}`);
+                }
+
+                const data = await response.json();
+                console.log('✅ Checkout session created:', data);
+                
+                if (data.success && data.checkoutUrl) {
+                    resultDiv.innerHTML = '✅ SUCCESS!\n\n' +
+                        'Checkout URL: ' + data.checkoutUrl + '\n\n' +
+                        'Redirecting to Stripe in 2 seconds...';
+                    resultDiv.className = 'success';
+                    
+                    setTimeout(() => {
+                        window.location.href = data.checkoutUrl;
+                    }, 2000);
+                } else {
+                    throw new Error('Invalid response: ' + JSON.stringify(data));
+                }
+            } catch (error) {
+                console.error('❌ Error:', error);
+                resultDiv.innerHTML = '❌ ERROR:\n\n' + error.message + '\n\n' +
+                    'Check browser console (F12) for details.';
+                resultDiv.className = 'error';
+            }
+        }
+    </script>
+</body>
+</html>
+
