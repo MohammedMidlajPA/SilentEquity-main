@@ -502,17 +502,80 @@ function RootLayout() {
 
 /* Pages */
 function HomePage() {
+  const [isLoading, setIsLoading] = useState(false);
+
   useEffect(() => {
     document.documentElement.style.scrollBehavior = "smooth";
   }, []);
-  const handleJoin = () => window.open(FORM_URL, "_blank", "noopener,noreferrer");
+
+  const handleJoin = async () => {
+    if (isLoading) return;
+    
+    setIsLoading(true);
+    try {
+      const API_BASE_URL = 'http://localhost:5001/api';
+      
+      console.log('🔄 Creating checkout session for waitlist...');
+      
+      const response = await fetch(`${API_BASE_URL}/payment/create-checkout-session`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({})
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorData;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {
+          errorData = { message: `Server error: ${response.status}` };
+        }
+        console.error('❌ API Error:', errorData);
+        alert('Failed to start payment: ' + (errorData.message || 'Please try again.'));
+        setIsLoading(false);
+        return;
+      }
+
+      const data = await response.json();
+      console.log('✅ Checkout session created:', data);
+      
+      if (data.success && data.checkoutUrl) {
+        // Redirect directly to Stripe Checkout
+        console.log('🔗 Redirecting to Stripe:', data.checkoutUrl);
+        window.location.href = data.checkoutUrl;
+      } else {
+        console.error('❌ Invalid response:', data);
+        alert('Failed to create payment session. Please try again.');
+        setIsLoading(false);
+      }
+    } catch (error) {
+      console.error('❌ Error creating checkout session:', error);
+      alert('Connection error: ' + error.message + '\n\nMake sure backend is running on port 5001');
+      setIsLoading(false);
+    }
+  };
+
   return (
     <>
       <section className="hero" role="region" aria-label="Hero">
         <h1 className="title gymbrand">
           NO FAKE HYPE <br /> NO GUESSING
         </h1>
-        <button className="cta" onClick={handleJoin}>JOIN THE WAITLIST</button>
+        <button 
+          className="cta" 
+          onClick={handleJoin}
+          disabled={isLoading}
+          style={{ 
+            opacity: isLoading ? 0.7 : 1,
+            cursor: isLoading ? 'wait' : 'pointer'
+          }}
+        >
+          {isLoading ? 'Redirecting to payment...' : 'JOIN THE WAITLIST'}
+        </button>
         <p className="subtext">Programs launching soon. Get early access updates.</p>
       </section>
       
