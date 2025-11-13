@@ -50,11 +50,13 @@ exports.createCheckoutSession = async (req, res) => {
     // Create Stripe Checkout Session
     // Stripe will collect customer name, email, and phone automatically
     // Using INR currency for Indian market (required for UPI)
-    // UPI is enabled in Dashboard - it will appear automatically via dynamic payment methods
+    // UPI is enabled in Dashboard - Stripe will show it automatically
     const checkoutSession = await stripe.checkout.sessions.create({
-      // Omitting payment_method_types enables dynamic payment method detection
-      // Stripe will show ALL available methods from Dashboard settings
-      // This includes UPI (since it's enabled in Dashboard) and Cards
+      // For Indian market: Stripe automatically shows Card + UPI when:
+      // 1. Currency is INR
+      // 2. UPI is enabled in Dashboard
+      // 3. Customer location is India (detected by Stripe)
+      // Omitting payment_method_types lets Stripe auto-detect and show all eligible methods
       line_items: [{
         price_data: {
           currency: 'inr', // INR required for UPI and Indian payment methods
@@ -82,9 +84,17 @@ exports.createCheckoutSession = async (req, res) => {
       // Payment method options
       payment_method_options: {
         card: {
-          request_three_d_secure: 'automatic' // Automatic 3D Secure handling for cards
+          // For Indian cards, 3D Secure (OTP) is mandatory
+          // 'automatic' means Stripe will request 3DS when required by card issuer
+          // This ensures OTP is asked for Indian debit/credit cards
+          request_three_d_secure: 'automatic' // Stripe will show OTP modal when required
         }
       },
+      // IMPORTANT: Omitting payment_method_types enables dynamic payment methods
+      // Stripe will automatically show:
+      // - Cards (with 3D Secure/OTP when required)
+      // - UPI (if enabled in Dashboard and customer is in India)
+      // This is the recommended approach for Indian market
       // Expire checkout session after 24 hours
       expires_at: Math.floor(Date.now() / 1000) + (24 * 60 * 60)
     });
