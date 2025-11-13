@@ -63,7 +63,8 @@ function WebinarPanel() {
     try {
       // Directly create checkout session and redirect to Stripe
       // No form needed - Stripe will collect user details
-      const API_BASE_URL = 'http://localhost:5001/api'; // Hardcode to avoid env issues
+      // Use proxy if available, otherwise direct connection  
+      const API_BASE_URL = '/api'; // Vite proxy handles CORS
       
       console.log('🔄 Creating checkout session...', API_BASE_URL);
       
@@ -513,9 +514,11 @@ function HomePage() {
     
     setIsLoading(true);
     try {
-      const API_BASE_URL = 'http://localhost:5001/api';
+      // Use Vite proxy to avoid CORS issues
+      const API_BASE_URL = '/api';
       
       console.log('🔄 Creating checkout session for waitlist...');
+      console.log('🌐 API URL:', `${API_BASE_URL}/payment/create-checkout-session`);
       
       const response = await fetch(`${API_BASE_URL}/payment/create-checkout-session`, {
         method: 'POST',
@@ -523,7 +526,8 @@ function HomePage() {
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         },
-        body: JSON.stringify({})
+        body: JSON.stringify({}),
+        mode: 'cors'
       });
 
       if (!response.ok) {
