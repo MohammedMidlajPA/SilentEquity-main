@@ -87,9 +87,6 @@ exports.createCheckoutSession = async (req, res) => {
           request_three_d_secure: 'automatic' // Automatic 3D Secure handling
         }
       },
-      // Payment method configuration - use your default configuration
-      // This ensures UPI is included if enabled in Dashboard
-      payment_method_configuration: 'pmc_1SJGxr1R8sS9eHMUBRTq68SB', // Your default configuration ID
       // Expire checkout session after 24 hours
       expires_at: Math.floor(Date.now() / 1000) + (24 * 60 * 60)
     });
