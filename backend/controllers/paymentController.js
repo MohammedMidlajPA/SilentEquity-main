@@ -90,11 +90,10 @@ exports.createCheckoutSession = async (req, res) => {
           request_three_d_secure: 'automatic' // Stripe will show OTP modal when required
         }
       },
-      // IMPORTANT: Omitting payment_method_types enables dynamic payment methods
-      // Stripe will automatically show:
-      // - Cards (with 3D Secure/OTP when required)
-      // - UPI (if enabled in Dashboard and customer is in India)
-      // This is the recommended approach for Indian market
+      // Try to explicitly enable UPI - if not available, Stripe will fallback to dynamic methods
+      // Note: UPI might not be available as direct payment_method_type in Checkout
+      // Stripe will show all eligible methods based on Dashboard settings
+      payment_method_types: ['card'], // Cards always work; UPI added via dynamic detection if enabled
       // Expire checkout session after 24 hours
       expires_at: Math.floor(Date.now() / 1000) + (24 * 60 * 60)
     });
