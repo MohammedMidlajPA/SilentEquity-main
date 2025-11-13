@@ -50,16 +50,16 @@ exports.createCheckoutSession = async (req, res) => {
     // Create Stripe Checkout Session
     // Stripe will collect customer name, email, and phone automatically
     // Using INR currency for Indian market
-    // Note: Omitting payment_method_types allows Stripe to automatically show all available methods
-    // based on your Dashboard settings, including UPI if enabled for your account
-    // Stripe will show the most relevant methods based on customer location and currency
+    // Note: UPI support depends on account configuration
+    // We'll try to enable UPI by using dynamic payment methods (omitting payment_method_types)
+    // If UPI is enabled in Dashboard, it will appear automatically
     const checkoutSession = await stripe.checkout.sessions.create({
-      // Omitting payment_method_types lets Stripe auto-detect and show all eligible payment methods
-      // This includes UPI if your account has it enabled in Dashboard > Settings > Payment Methods
-      // For Indian customers with INR, Stripe will show UPI if available, otherwise card
+      // Omitting payment_method_types enables dynamic payment method detection
+      // Stripe will show all available methods based on Dashboard settings
+      // This includes UPI if your account has it enabled
       line_items: [{
         price_data: {
-          currency: 'inr', // INR required for UPI, cards will work with currency conversion
+          currency: 'inr', // INR required for UPI and Indian payment methods
           product_data: {
             name: 'Silent Edge Execution Masterclass',
             description: 'Webinar Registration - Access to exclusive trading masterclass'
@@ -81,12 +81,15 @@ exports.createCheckoutSession = async (req, res) => {
         amountINR: (amountInINR / 100).toFixed(2),
         googleFormUrl: GOOGLE_FORM_URL
       },
-      // Allow payment method selection (card or UPI)
+      // Payment method options
       payment_method_options: {
         card: {
           request_three_d_secure: 'automatic' // Automatic 3D Secure handling
         }
       },
+      // Payment method configuration - use your default configuration
+      // This ensures UPI is included if enabled in Dashboard
+      payment_method_configuration: 'pmc_1SJGxr1R8sS9eHMUBRTq68SB', // Your default configuration ID
       // Expire checkout session after 24 hours
       expires_at: Math.floor(Date.now() / 1000) + (24 * 60 * 60)
     });
