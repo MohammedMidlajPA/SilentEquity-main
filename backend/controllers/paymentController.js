@@ -50,8 +50,13 @@ exports.createCheckoutSession = async (req, res) => {
     // Create Stripe Checkout Session
     // Stripe will collect customer name, email, and phone automatically
     // Using INR currency for Indian market
+    // Note: Omitting payment_method_types allows Stripe to automatically show all available methods
+    // based on your Dashboard settings, including UPI if enabled for your account
     const checkoutSession = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'], // UPI can be added later if account supports it
+      // Omitting payment_method_types lets Stripe auto-detect and show all eligible payment methods
+      // This includes UPI if your account has it enabled in Dashboard > Settings > Payment Methods
+      // Stripe will show the most relevant methods based on customer location and currency
+      // For Indian customers with INR, Stripe will show UPI if available, otherwise card
       line_items: [{
         price_data: {
           currency: 'inr', // INR required for UPI, cards will work with currency conversion
