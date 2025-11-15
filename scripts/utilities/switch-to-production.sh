@@ -1,7 +1,9 @@
 #!/bin/bash
 
-# Stripe Test to Production Migration Script
-# This script helps switch from test to production Stripe keys
+# 🔄 Switch Stripe from Test to Production Mode
+# This script helps migrate from test keys to live keys
+
+set -e
 
 echo "🚀 Stripe Production Migration Script"
 echo "======================================"
@@ -14,75 +16,101 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Check if .env files exist
-if [ ! -f "backend/.env" ]; then
-    echo -e "${RED}❌ Error: backend/.env not found${NC}"
-    exit 1
+BACKEND_ENV="backend/.env"
+FRONTEND_ENV="frontend/.env"
+
+if [ ! -f "$BACKEND_ENV" ]; then
+  echo -e "${RED}❌ Error: $BACKEND_ENV not found${NC}"
+  echo "Please create it first with your test keys"
+  exit 1
 fi
 
-if [ ! -f "frontend/.env" ]; then
-    echo -e "${RED}❌ Error: frontend/.env not found${NC}"
-    exit 1
+if [ ! -f "$FRONTEND_ENV" ]; then
+  echo -e "${YELLOW}⚠️  Warning: $FRONTEND_ENV not found${NC}"
+  echo "Creating it..."
+  touch "$FRONTEND_ENV"
 fi
 
-echo -e "${YELLOW}⚠️  WARNING: This will switch from TEST to PRODUCTION mode${NC}"
-echo -e "${YELLOW}⚠️  Make sure you have:${NC}"
-echo "   1. Live Stripe keys (sk_live_... and pk_live_...)"
-echo "   2. Production webhook secret"
-echo "   3. Production frontend URL"
-echo ""
-read -p "Continue? (yes/no): " confirm
-
-if [ "$confirm" != "yes" ]; then
-    echo "Cancelled."
-    exit 0
-fi
-
-# Backup current .env files
-echo ""
+# Backup existing .env files
 echo "📦 Creating backups..."
-cp backend/.env backend/.env.test.backup
-cp frontend/.env frontend/.env.test.backup
+BACKUP_DATE=$(date +%Y%m%d_%H%M%S)
+cp "$BACKEND_ENV" "${BACKEND_ENV}.backup.${BACKUP_DATE}"
+cp "$FRONTEND_ENV" "${FRONTEND_ENV}.backup.${BACKUP_DATE}" 2>/dev/null || true
 echo -e "${GREEN}✅ Backups created${NC}"
-
-# Get production keys
 echo ""
-echo "🔑 Enter Production Stripe Keys:"
-read -p "Secret Key (sk_live_...): " STRIPE_SECRET
-read -p "Publishable Key (pk_live_...): " STRIPE_PUBLISHABLE
-read -p "Webhook Secret (whsec_...): " WEBHOOK_SECRET
-read -p "Frontend URL (https://yourdomain.com): " FRONTEND_URL
+
+# Prompt for production keys
+echo "🔑 Enter your Stripe Production Keys"
+echo "Get them from: https://dashboard.stripe.com (switch to Live mode)"
+echo ""
+
+read -p "Stripe Secret Key (sk_live_...): " STRIPE_SECRET_KEY
+read -p "Stripe Publishable Key (pk_live_...): " STRIPE_PUBLISHABLE_KEY
+read -p "Stripe Webhook Secret (whsec_...): " STRIPE_WEBHOOK_SECRET
+read -p "Production Frontend URL (e.g., https://yourdomain.com): " FRONTEND_URL
+read -p "Production API URL (e.g., https://api.yourdomain.com/api): " API_URL
+
+# Validate keys
+if [[ ! "$STRIPE_SECRET_KEY" =~ ^sk_live_ ]]; then
+  echo -e "${RED}❌ Error: Secret key must start with 'sk_live_'${NC}"
+  exit 1
+fi
+
+if [[ ! "$STRIPE_PUBLISHABLE_KEY" =~ ^pk_live_ ]]; then
+  echo -e "${RED}❌ Error: Publishable key must start with 'pk_live_'${NC}"
+  exit 1
+fi
+
+if [[ ! "$STRIPE_WEBHOOK_SECRET" =~ ^whsec_ ]]; then
+  echo -e "${YELLOW}⚠️  Warning: Webhook secret should start with 'whsec_'${NC}"
+  read -p "Continue anyway? (y/n): " CONTINUE
+  if [ "$CONTINUE" != "y" ]; then
+    exit 1
+  fi
+fi
+
+echo ""
+echo "🔄 Updating backend/.env..."
 
 # Update backend .env
-echo ""
-echo "📝 Updating backend/.env..."
-sed -i.bak "s|STRIPE_SECRET_KEY=.*|STRIPE_SECRET_KEY=$STRIPE_SECRET|" backend/.env
-sed -i.bak "s|STRIPE_PUBLISHABLE_KEY=.*|STRIPE_PUBLISHABLE_KEY=$STRIPE_PUBLISHABLE|" backend/.env
-sed -i.bak "s|STRIPE_WEBHOOK_SECRET=.*|STRIPE_WEBHOOK_SECRET=$WEBHOOK_SECRET|" backend/.env
-sed -i.bak "s|FRONTEND_URL=.*|FRONTEND_URL=$FRONTEND_URL|" backend/.env
-sed -i.bak "s|NODE_ENV=.*|NODE_ENV=production|" backend/.env
+sed -i.bak "s|STRIPE_SECRET_KEY=.*|STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY|" "$BACKEND_ENV"
+sed -i.bak "s|STRIPE_WEBHOOK_SECRET=.*|STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET|" "$BACKEND_ENV"
+sed -i.bak "s|FRONTEND_URL=.*|FRONTEND_URL=$FRONTEND_URL|" "$BACKEND_ENV"
+sed -i.bak "s|NODE_ENV=.*|NODE_ENV=production|" "$BACKEND_ENV"
+
+# Add if not exists
+grep -q "^STRIPE_SECRET_KEY=" "$BACKEND_ENV" || echo "STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY" >> "$BACKEND_ENV"
+grep -q "^STRIPE_WEBHOOK_SECRET=" "$BACKEND_ENV" || echo "STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET" >> "$BACKEND_ENV"
+grep -q "^FRONTEND_URL=" "$BACKEND_ENV" || echo "FRONTEND_URL=$FRONTEND_URL" >> "$BACKEND_ENV"
+grep -q "^NODE_ENV=" "$BACKEND_ENV" || echo "NODE_ENV=production" >> "$BACKEND_ENV"
+
 echo -e "${GREEN}✅ Backend .env updated${NC}"
 
-# Update frontend .env
 echo ""
-echo "📝 Updating frontend/.env..."
-sed -i.bak "s|VITE_STRIPE_PUBLISHABLE_KEY=.*|VITE_STRIPE_PUBLISHABLE_KEY=$STRIPE_PUBLISHABLE|" frontend/.env
-sed -i.bak "s|VITE_API_BASE_URL=.*|VITE_API_BASE_URL=$FRONTEND_URL/api|" frontend/.env
+echo "🔄 Updating frontend/.env..."
+
+# Update frontend .env
+sed -i.bak "s|VITE_STRIPE_PUBLISHABLE_KEY=.*|VITE_STRIPE_PUBLISHABLE_KEY=$STRIPE_PUBLISHABLE_KEY|" "$FRONTEND_ENV" 2>/dev/null || true
+sed -i.bak "s|VITE_API_BASE_URL=.*|VITE_API_BASE_URL=$API_URL|" "$FRONTEND_ENV" 2>/dev/null || true
+
+# Add if not exists
+grep -q "^VITE_STRIPE_PUBLISHABLE_KEY=" "$FRONTEND_ENV" || echo "VITE_STRIPE_PUBLISHABLE_KEY=$STRIPE_PUBLISHABLE_KEY" >> "$FRONTEND_ENV"
+grep -q "^VITE_API_BASE_URL=" "$FRONTEND_ENV" || echo "VITE_API_BASE_URL=$API_URL" >> "$FRONTEND_ENV"
+
 echo -e "${GREEN}✅ Frontend .env updated${NC}"
 
-# Clean up backup files
-rm backend/.env.bak frontend/.env.bak 2>/dev/null
+# Clean up backup files created by sed
+rm -f "${BACKEND_ENV}.bak" "${FRONTEND_ENV}.bak" 2>/dev/null || true
 
 echo ""
 echo -e "${GREEN}✅ Migration Complete!${NC}"
 echo ""
 echo "📋 Next Steps:"
-echo "   1. Restart backend server"
-echo "   2. Rebuild frontend: cd frontend && npm run build"
-echo "   3. Test with a small real payment"
-echo "   4. Monitor Stripe Dashboard for payments"
+echo "1. Verify webhook endpoint in Stripe Dashboard"
+echo "2. Test a small payment"
+echo "3. Monitor logs for any issues"
 echo ""
-echo "📚 See PRODUCTION_MIGRATION.md for detailed guide"
-
-
-
-
+echo "🔄 To rollback, restore from backups:"
+echo "   cp ${BACKEND_ENV}.backup.${BACKUP_DATE} ${BACKEND_ENV}"
+echo "   cp ${FRONTEND_ENV}.backup.${BACKUP_DATE} ${FRONTEND_ENV}"
+echo ""
