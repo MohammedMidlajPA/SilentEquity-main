@@ -62,3 +62,6 @@ UPI appears when:
 
 **Your checkout now shows Card and UPI as two payment options!** 🎉
 
+
+
+

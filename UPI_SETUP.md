@@ -79,3 +79,6 @@ Then open the checkout URL and check if UPI appears as an option.
 - Stripe Support: https://support.stripe.com/contact
 - Check Dashboard: https://dashboard.stripe.com/settings/payment_methods
 
+
+
+

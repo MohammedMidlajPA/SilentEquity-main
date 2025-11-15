@@ -86,3 +86,6 @@ Once set up, you can use commands like:
 ⏳ Waiting for Hostinger API credentials
 ⏳ Waiting for MCP server installation
 
+
+
+

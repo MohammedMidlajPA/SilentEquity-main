@@ -50,3 +50,6 @@ Your checkout is configured to show:
 
 **Google Pay is not an option** for Indian customers per Stripe's limitations.
 
+
+
+

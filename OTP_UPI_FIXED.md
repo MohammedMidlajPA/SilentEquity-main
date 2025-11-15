@@ -112,3 +112,6 @@ Stripe automatically shows UPI when:
 
 **Both OTP and UPI are now properly configured!** 🎉
 
+
+
+

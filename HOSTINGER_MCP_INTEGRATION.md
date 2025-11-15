@@ -68,3 +68,6 @@ If MCP server doesn't load:
 
 **Restart Cursor to activate Hostinger MCP server!**
 
+
+
+

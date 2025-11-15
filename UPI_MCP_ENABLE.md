@@ -84,3 +84,6 @@ If UPI still doesn't work with Checkout, we can switch to **Payment Element**:
 
 **The integration is complete - you just need Stripe to enable UPI for your account!**
 
+
+
+

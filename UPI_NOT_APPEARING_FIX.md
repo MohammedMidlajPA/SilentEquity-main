@@ -139,3 +139,6 @@ Once Stripe enables UPI:
 
 **UPI will NOT appear until Stripe enables it for your account!**
 
+
+
+

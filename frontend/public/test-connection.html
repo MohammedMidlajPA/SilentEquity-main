@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Payment Connection</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #000;
+            color: #fff;
+        }
+        button {
+            background: #00ffde;
+            color: #000;
+            border: none;
+            padding: 15px 30px;
+            font-size: 18px;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            margin: 20px 0;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            background: #1a1a1a;
+            border-radius: 8px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+        .success { color: #00ffde; }
+        .error { color: #ff6b6b; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Test Payment Connection</h1>
+    <p>This page tests the connection to the payment API.</p>
+    
+    <button onclick="testConnection()">Test Connection</button>
+    
+    <div id="result"></div>
+
+    <script>
+        async function testConnection() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '🔄 Testing...';
+            resultDiv.className = '';
+            
+            try {
+                console.log('Testing connection to http://localhost:5001/api/payment/create-checkout-session');
+                
+                const response = await fetch('http://localhost:5001/api/payment/create-checkout-session', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({}),
+                    mode: 'cors'
+                });
+
+                console.log('Response status:', response.status, response.statusText);
+                console.log('Response headers:', [...response.headers.entries()]);
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+
+                const data = await response.json();
+                console.log('Response data:', data);
+                
+                if (data.success && data.checkoutUrl) {
+                    resultDiv.innerHTML = '✅ SUCCESS!\n\n' +
+                        'Checkout URL: ' + data.checkoutUrl + '\n\n' +
+                        'Redirecting in 2 seconds...';
+                    resultDiv.className = 'success';
+                    
+                    setTimeout(() => {
+                        window.location.href = data.checkoutUrl;
+                    }, 2000);
+                } else {
+                    throw new Error('Invalid response: ' + JSON.stringify(data));
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                resultDiv.innerHTML = '❌ ERROR:\n\n' + error.message + '\n\n' +
+                    'Check browser console (F12) for details.';
+                resultDiv.className = 'error';
+            }
+        }
+    </script>
+</body>
+</html>
+
