@@ -116,7 +116,7 @@ const PaymentCard = memo(({ webinarData, onPaymentSuccess, onPaymentError }) => 
         throw new Error('Payment not completed');
       }
     } catch (err) {
-      console.error('Payment error:', err);
+      // Error will be handled by parent component
       const errorMsg = err.message || 'Payment failed';
       
       // Provide user-friendly error messages

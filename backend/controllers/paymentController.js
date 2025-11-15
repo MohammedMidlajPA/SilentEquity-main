@@ -2,9 +2,10 @@ const { stripe } = require('../config/stripe');
 const User = require('../models/User');
 const Payment = require('../models/Payment');
 const { sendPaymentConfirmationEmail } = require('../utils/email');
-const { logPaymentCreation, logPaymentSuccess, logPaymentFailure, logWebhookEvent } = require('../utils/logger');
+const { logger, logPaymentCreation, logPaymentSuccess, logPaymentFailure, logWebhookEvent } = require('../utils/logger');
 const { convertUSDToINR } = require('../utils/currency');
 const { validatePaymentRequest, validateStripeSessionId } = require('../utils/validation');
+const constants = require('../config/constants');
 const mongoose = require('mongoose');
 
 /**
@@ -45,7 +46,7 @@ exports.createCheckoutSession = async (req, res) => {
     }
 
     // Google Form URL for verification (users must complete after payment)
-    const GOOGLE_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLScxS_5gOlOif-wuXM8JFgnac1gQC9hqLBb9EWLAKmszFKNDxg/viewform?usp=publish-editor';
+    const GOOGLE_FORM_URL = constants.GOOGLE_FORM_URL;
 
     // Create Stripe Checkout Session
     // Stripe will collect customer name, email, and phone automatically
@@ -95,11 +96,11 @@ exports.createCheckoutSession = async (req, res) => {
       // Stripe will show Card + UPI dynamically if UPI is enabled in Dashboard
       // Omitting payment_method_types lets Stripe show all eligible methods (Card + UPI)
       // This ensures both Card and UPI appear when available
-      // Expire checkout session after 24 hours
-      expires_at: Math.floor(Date.now() / 1000) + (24 * 60 * 60)
+      // Expire checkout session after configured hours
+      expires_at: Math.floor(Date.now() / 1000) + (constants.CHECKOUT_SESSION_EXPIRY_HOURS * 60 * 60)
     });
     
-    console.log('✅ Checkout session created:', checkoutSession.id);
+    logger.info('Checkout session created', { sessionId: checkoutSession.id });
 
     logPaymentCreation({
       amount: amountInINR,
@@ -116,7 +117,10 @@ exports.createCheckoutSession = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Create checkout session error:', error);
+    logger.error('Create checkout session error', {
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+    });
     
     // Determine error type
     let statusCode = 500;
@@ -148,6 +152,9 @@ exports.createCheckoutSession = async (req, res) => {
 /**
  * Verify Checkout Session
  * Check payment status when user returns from Stripe Checkout
+ * @param {Object} req - Express request object (query: { sessionId })
+ * @param {Object} res - Express response object
+ * @returns {Promise<void>}
  */
 exports.verifyCheckoutSession = async (req, res) => {
   try {
@@ -221,7 +228,10 @@ exports.verifyCheckoutSession = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Verify checkout session error:', error);
+    logger.error('Verify checkout session error', {
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+    });
     res.status(500).json({
       success: false,
       message: 'Failed to verify checkout session',
@@ -234,6 +244,9 @@ exports.verifyCheckoutSession = async (req, res) => {
  * Create Payment Intent with 3D Secure Authentication
  * Step 1: Initialize payment with mandatory authentication
  * @deprecated Use createCheckoutSession instead
+ * @param {Object} req - Express request object (body: { name, email, phone })
+ * @param {Object} res - Express response object
+ * @returns {Promise<void>}
  */
 exports.createPaymentIntent = async (req, res) => {
   try {
@@ -266,13 +279,13 @@ exports.createPaymentIntent = async (req, res) => {
         phone
       });
       await user.save();
-      console.log('✅ New user created:', email);
+      logger.info('New user created', { email });
     } else {
       // Update user details if changed
       user.name = name;
       user.phone = phone;
       await user.save();
-      console.log('✅ User updated:', email);
+      logger.info('User updated', { email });
     }
 
     // Calculate amount in cents
@@ -315,7 +328,7 @@ exports.createPaymentIntent = async (req, res) => {
     });
 
     await payment.save();
-    console.log('✅ Payment intent created with 3D Secure:', paymentIntent.id);
+    logger.info('Payment intent created with 3D Secure', { paymentIntentId: paymentIntent.id });
 
     logPaymentCreation({
       userId: user._id.toString(),
@@ -334,7 +347,10 @@ exports.createPaymentIntent = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Create payment intent error:', error);
+    logger.error('Create payment intent error', {
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+    });
     logPaymentFailure({
       error: error.message,
       errorType: 'payment_intent_creation_failed',
@@ -351,6 +367,10 @@ exports.createPaymentIntent = async (req, res) => {
 /**
  * Confirm Payment
  * Step 2: Verify payment succeeded after 3D Secure authentication
+ * @deprecated Use verifyCheckoutSession instead
+ * @param {Object} req - Express request object (body: { paymentIntentId })
+ * @param {Object} res - Express response object
+ * @returns {Promise<void>}
  */
 exports.confirmPayment = async (req, res) => {
   try {
@@ -420,7 +440,7 @@ exports.confirmPayment = async (req, res) => {
       await user.save();
     }
 
-    console.log('✅ Payment confirmed after 3D Secure:', paymentIntentId);
+    logger.info('Payment confirmed after 3D Secure', { paymentIntentId });
 
     logPaymentSuccess({
       paymentId: payment._id.toString(),
@@ -437,9 +457,9 @@ exports.confirmPayment = async (req, res) => {
       try {
         const charge = await stripe.charges.retrieve(paymentIntent.latest_charge);
         receiptUrl = charge.receipt_url;
-        console.log('✅ Receipt URL generated:', receiptUrl);
+        logger.info('Receipt URL generated', { receiptUrl });
       } catch (error) {
-        console.error('⚠️ Could not retrieve receipt URL:', error.message);
+        logger.warn('Could not retrieve receipt URL', { error: error.message });
       }
     }
 
@@ -458,9 +478,9 @@ exports.confirmPayment = async (req, res) => {
 
     // Send email asynchronously (don't block response)
     sendPaymentConfirmationEmail(emailData).catch(err => {
-      console.error('⚠️ Failed to send confirmation email:', err.message);
+      logger.error('Failed to send confirmation email', { error: err.message });
     });
-    console.log('✅ Payment confirmed, email queued:', payment.userEmail);
+    logger.info('Payment confirmed, email queued', { email: payment.userEmail });
 
     res.status(200).json({
       success: true,
@@ -475,7 +495,10 @@ exports.confirmPayment = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Confirm payment error:', error);
+    logger.error('Confirm payment error', {
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+    });
     res.status(500).json({
       success: false,
       message: 'Failed to confirm payment',
@@ -487,6 +510,10 @@ exports.confirmPayment = async (req, res) => {
 /**
  * Create UPI Payment Intent
  * Create payment intent for UPI payments
+ * @deprecated Use createCheckoutSession instead (UPI is automatically available)
+ * @param {Object} req - Express request object (body: { upiId, name, email, phone, amount? })
+ * @param {Object} res - Express response object
+ * @returns {Promise<void>}
  */
 exports.createUPIPaymentIntent = async (req, res) => {
   try {
@@ -528,12 +555,12 @@ exports.createUPIPaymentIntent = async (req, res) => {
         phone
       });
       await user.save();
-      console.log('✅ New user created:', email);
+      logger.info('New user created', { email });
     } else {
       user.name = name;
       user.phone = phone;
       await user.save();
-      console.log('✅ User updated:', email);
+      logger.info('User updated', { email });
     }
 
     // Calculate amount in cents
@@ -562,7 +589,7 @@ exports.createUPIPaymentIntent = async (req, res) => {
       });
     } catch (stripeError) {
       // If UPI payment intent fails, create a Payment Link as fallback
-      console.log('⚠️ UPI Payment Intent not available, creating Payment Link...');
+      logger.warn('UPI Payment Intent not available, creating Payment Link', { error: stripeError.message });
       
       try {
         const session = await stripe.checkout.sessions.create({
@@ -593,9 +620,9 @@ exports.createUPIPaymentIntent = async (req, res) => {
         });
 
         paymentLink = session.url;
-        console.log('✅ Payment Link created for UPI:', session.id);
+        logger.info('Payment Link created for UPI', { sessionId: session.id });
       } catch (checkoutError) {
-        console.error('❌ Failed to create Payment Link:', checkoutError);
+        logger.error('Failed to create Payment Link', { error: checkoutError.message });
         throw new Error('UPI payment is not available in your region. Please use card payment.');
       }
     }
@@ -615,7 +642,10 @@ exports.createUPIPaymentIntent = async (req, res) => {
     });
 
     await payment.save();
-    console.log('✅ UPI payment intent/link created:', paymentIntent?.id || paymentLink);
+    logger.info('UPI payment intent/link created', { 
+      paymentIntentId: paymentIntent?.id, 
+      paymentLink: paymentLink ? 'created' : null 
+    });
 
     res.status(200).json({
       success: true,
@@ -627,7 +657,10 @@ exports.createUPIPaymentIntent = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Create UPI payment intent error:', error);
+    logger.error('Create UPI payment intent error', {
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+    });
     res.status(500).json({
       success: false,
       message: 'Failed to create UPI payment',
@@ -639,6 +672,9 @@ exports.createUPIPaymentIntent = async (req, res) => {
 /**
  * Get Payment Status
  * Check if user has already paid
+ * @param {Object} req - Express request object (query: { email?, paymentIntentId? })
+ * @param {Object} res - Express response object
+ * @returns {Promise<void>}
  */
 exports.getPaymentStatus = async (req, res) => {
   try {
@@ -710,7 +746,10 @@ exports.getPaymentStatus = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Get payment status error:', error);
+    logger.error('Get payment status error', {
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+    });
     res.status(500).json({
       success: false,
       message: 'Failed to get payment status',
@@ -722,12 +761,17 @@ exports.getPaymentStatus = async (req, res) => {
 /**
  * Handle Stripe Webhook Events
  * Process payment status updates from Stripe
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
  */
 exports.handleWebhook = async (req, res) => {
   const event = req.stripeEvent;
 
   try {
-    console.log('📥 Webhook received:', event.type, event.id);
+    logger.info('Webhook received', { 
+      type: event.type, 
+      eventId: event.id 
+    });
 
     logWebhookEvent(event.type, {
       id: event.id,
@@ -735,343 +779,56 @@ exports.handleWebhook = async (req, res) => {
       status: event.data.object?.status
     });
 
+    const {
+      handlePaymentIntentSucceeded,
+      handlePaymentIntentFailed,
+      handleCheckoutSessionCompleted,
+      handleAsyncPaymentSucceeded,
+      handleAsyncPaymentFailed,
+    } = require('./webhookHandlers');
+
     switch (event.type) {
       case 'payment_intent.succeeded':
-        {
-          const paymentIntent = event.data.object;
-          console.log('✅ Payment succeeded via webhook:', paymentIntent.id);
-
-          // Find and update payment record
-          const payment = await Payment.findOne({
-            stripePaymentIntentId: paymentIntent.id
-          });
-
-          if (payment && payment.status !== 'succeeded') {
-            payment.status = 'succeeded';
-            payment.paidAt = new Date();
-            payment.meetingLink = process.env.WEBINAR_MEETING_LINK;
-            payment.stripeChargeId = paymentIntent.latest_charge;
-            payment.paymentMethod = paymentIntent.payment_method_types?.[0] || 'unknown';
-            await payment.save();
-
-            // Update user's registered webinars
-            const user = await User.findById(payment.user);
-            if (user && !user.registeredWebinars.includes(payment._id)) {
-              user.registeredWebinars.push(payment._id);
-              await user.save();
-            }
-
-            // Send confirmation email
-            const emailData = {
-              userName: payment.userName,
-              userEmail: payment.userEmail,
-              amount: payment.amount,
-              meetingLink: payment.meetingLink,
-              webinarTitle: payment.webinarTitle,
-              receiptUrl: paymentIntent.receipt_url || null,
-              paymentId: payment._id.toString(),
-              transactionId: paymentIntent.latest_charge,
-              paidAt: payment.paidAt
-            };
-
-            sendPaymentConfirmationEmail(emailData).catch(err => {
-              console.error('⚠️ Failed to send confirmation email:', err.message);
-            });
-
-            logPaymentSuccess({
-              paymentId: payment._id.toString(),
-              userId: payment.user.toString(),
-              amount: payment.amount,
-              currency: payment.currency,
-              paymentMethod: payment.paymentMethod,
-              stripePaymentIntentId: paymentIntent.id
-            });
-
-            console.log('✅ Payment updated via webhook:', paymentIntent.id);
-          }
-        }
+        await handlePaymentIntentSucceeded(event.data.object);
         break;
 
       case 'payment_intent.payment_failed':
-        {
-          const paymentIntent = event.data.object;
-          console.log('❌ Payment failed via webhook:', paymentIntent.id);
-
-          const payment = await Payment.findOne({
-            stripePaymentIntentId: paymentIntent.id
-          });
-
-          if (payment && payment.status === 'pending') {
-            payment.status = 'failed';
-            await payment.save();
-            
-            logPaymentFailure({
-              paymentId: payment._id.toString(),
-              userId: payment.user.toString(),
-              amount: payment.amount,
-              error: paymentIntent.last_payment_error?.message || 'Payment failed',
-              errorType: 'payment_failed',
-              stripePaymentIntentId: paymentIntent.id
-            });
-
-            console.log('✅ Payment status updated to failed:', paymentIntent.id);
-          }
-        }
+        await handlePaymentIntentFailed(event.data.object);
         break;
 
       case 'payment_intent.requires_action':
-        {
-          const paymentIntent = event.data.object;
-          console.log('⚠️ Payment requires action:', paymentIntent.id);
-          // Payment is waiting for 3D Secure - no action needed, frontend handles it
-        }
+        logger.info('Payment requires action (3D Secure)', { 
+          paymentIntentId: event.data.object.id 
+        });
+        // Payment is waiting for 3D Secure - no action needed, frontend handles it
         break;
 
       case 'checkout.session.completed':
-        {
-          const checkoutSession = event.data.object;
-          console.log('✅ Checkout session completed:', checkoutSession.id);
-
-          // Handle payment via checkout session (both card and UPI)
-          // Stripe collects customer details, so we get them from checkout session
-          if (checkoutSession.payment_status === 'paid') {
-            // Get customer details from Stripe Checkout
-            const customerEmail = checkoutSession.customer_details?.email || checkoutSession.customer_email;
-            const customerName = checkoutSession.customer_details?.name || 'Customer';
-            const customerPhone = checkoutSession.customer_details?.phone || '';
-            const webinarTitle = checkoutSession.metadata?.webinarTitle || 'Silent Edge Execution Masterclass';
-            const googleFormUrl = checkoutSession.metadata?.googleFormUrl || 'https://docs.google.com/forms/d/e/1FAIpQLScxS_5gOlOif-wuXM8JFgnac1gQC9hqLBb9EWLAKmszFKNDxg/viewform?usp=publish-editor';
-
-            if (!customerEmail) {
-              console.error('❌ No customer email in checkout session:', checkoutSession.id);
-              break;
-            }
-
-            // Find existing payment record first (idempotency check)
-            let payment = await Payment.findOne({
-              stripePaymentIntentId: checkoutSession.id
-            });
-
-            // If payment already succeeded, skip processing (idempotent)
-            if (payment && payment.status === 'succeeded') {
-              console.log('ℹ️ Payment already processed (idempotent):', checkoutSession.id);
-              break;
-            }
-
-            // Find or create user
-            let user = await User.findOne({ email: customerEmail.toLowerCase() });
-            if (!user) {
-              user = new User({
-                name: customerName,
-                email: customerEmail.toLowerCase(),
-                phone: customerPhone
-              });
-              await user.save();
-              console.log('✅ New user created from checkout:', customerEmail);
-            } else {
-              // Update user details from Stripe
-              user.name = customerName;
-              if (customerPhone) user.phone = customerPhone;
-              await user.save();
-            }
-
-            if (!payment) {
-              // Create new payment record
-              payment = new Payment({
-                user: user._id,
-                userName: customerName,
-                userEmail: customerEmail.toLowerCase(),
-                userPhone: customerPhone,
-                stripePaymentIntentId: checkoutSession.id,
-                amount: checkoutSession.amount_total,
-                currency: checkoutSession.currency,
-                status: 'succeeded',
-                paidAt: new Date(),
-                paymentMethod: checkoutSession.payment_method_types?.[0] || 'unknown',
-                webinarTitle: webinarTitle
-              });
-            } else {
-              // Update existing payment record
-              payment.status = 'succeeded';
-              payment.paidAt = new Date();
-              payment.paymentMethod = checkoutSession.payment_method_types?.[0] || payment.paymentMethod;
-            }
-
-            // Get receipt URL from payment intent
-            let receiptUrl = null;
-            if (checkoutSession.payment_intent) {
-              try {
-                const paymentIntent = await stripe.paymentIntents.retrieve(checkoutSession.payment_intent, {
-                  expand: ['latest_charge']
-                });
-                if (paymentIntent.latest_charge) {
-                  const charge = await stripe.charges.retrieve(paymentIntent.latest_charge);
-                  receiptUrl = charge.receipt_url;
-                  payment.stripeChargeId = paymentIntent.latest_charge;
-                }
-              } catch (error) {
-                console.error('⚠️ Could not retrieve receipt URL:', error.message);
-              }
-            }
-
-            await payment.save();
-
-            // Update user's registered webinars
-            if (!user.registeredWebinars.includes(payment._id)) {
-              user.registeredWebinars.push(payment._id);
-              await user.save();
-            }
-
-            // Send custom branded confirmation email (in addition to Stripe's automatic receipt)
-            // Email includes Google form link for verification (no meeting link)
-            const emailData = {
-              userName: payment.userName,
-              userEmail: payment.userEmail,
-              amount: payment.amount,
-              webinarTitle: payment.webinarTitle,
-              receiptUrl: receiptUrl, // Include Stripe receipt URL in custom email
-              googleFormUrl: googleFormUrl, // Google form for verification
-              paymentId: payment._id.toString(),
-              transactionId: checkoutSession.payment_intent || checkoutSession.id,
-              paidAt: payment.paidAt
-            };
-
-            sendPaymentConfirmationEmail(emailData).catch(err => {
-              console.error('⚠️ Failed to send confirmation email:', err.message);
-            });
-
-            logPaymentSuccess({
-              paymentId: payment._id.toString(),
-              userId: payment.user.toString(),
-              amount: payment.amount,
-              currency: payment.currency,
-              paymentMethod: payment.paymentMethod,
-              stripePaymentIntentId: checkoutSession.id
-            });
-
-            console.log('✅ Payment processed via checkout webhook:', checkoutSession.id);
-            // Note: Stripe automatically sends receipt email via customer_email in checkout session
-          }
-        }
+        await handleCheckoutSessionCompleted(event.data.object);
         break;
 
       case 'checkout.session.async_payment_succeeded':
-        {
-          const checkoutSession = event.data.object;
-          console.log('✅ Async payment succeeded (UPI):', checkoutSession.id);
-
-          // Handle async payment completion (e.g., UPI)
-          // Idempotency: Check if already processed
-          if (checkoutSession.metadata && checkoutSession.metadata.userId) {
-            const payment = await Payment.findOne({
-              stripePaymentIntentId: checkoutSession.id
-            });
-
-            // If payment already succeeded, skip processing (idempotent)
-            if (payment && payment.status === 'succeeded') {
-              console.log('ℹ️ Async payment already processed (idempotent):', checkoutSession.id);
-              break;
-            }
-
-            if (payment && payment.status !== 'succeeded') {
-              payment.status = 'succeeded';
-              payment.paidAt = new Date();
-              await payment.save();
-
-              // Get receipt URL
-              let receiptUrl = null;
-              if (checkoutSession.payment_intent) {
-                try {
-                  const paymentIntent = await stripe.paymentIntents.retrieve(checkoutSession.payment_intent, {
-                    expand: ['latest_charge']
-                  });
-                  if (paymentIntent.latest_charge) {
-                    const charge = await stripe.charges.retrieve(paymentIntent.latest_charge);
-                    receiptUrl = charge.receipt_url;
-                    payment.stripeChargeId = paymentIntent.latest_charge;
-                  }
-                } catch (error) {
-                  console.error('⚠️ Could not retrieve receipt URL:', error.message);
-                }
-              }
-
-              await payment.save();
-
-              // Update user's registered webinars
-              const user = await User.findById(payment.user);
-              if (user && !user.registeredWebinars.includes(payment._id)) {
-                user.registeredWebinars.push(payment._id);
-                await user.save();
-              }
-
-              // Get Google form URL from metadata
-              const googleFormUrl = checkoutSession.metadata?.googleFormUrl || 'https://docs.google.com/forms/d/e/1FAIpQLScxS_5gOlOif-wuXM8JFgnac1gQC9hqLBb9EWLAKmszFKNDxg/viewform?usp=publish-editor';
-
-              // Send confirmation email
-              const emailData = {
-                userName: payment.userName,
-                userEmail: payment.userEmail,
-                amount: payment.amount,
-                webinarTitle: payment.webinarTitle,
-                receiptUrl: receiptUrl,
-                googleFormUrl: googleFormUrl,
-                paymentId: payment._id.toString(),
-                transactionId: checkoutSession.payment_intent || checkoutSession.id,
-                paidAt: payment.paidAt
-              };
-
-              sendPaymentConfirmationEmail(emailData).catch(err => {
-                console.error('⚠️ Failed to send confirmation email:', err.message);
-              });
-
-              logPaymentSuccess({
-                paymentId: payment._id.toString(),
-                userId: payment.user.toString(),
-                amount: payment.amount,
-                currency: payment.currency,
-                paymentMethod: payment.paymentMethod || 'upi',
-                stripePaymentIntentId: checkoutSession.id
-              });
-            }
-          }
-        }
+        await handleAsyncPaymentSucceeded(event.data.object);
         break;
 
       case 'checkout.session.async_payment_failed':
-        {
-          const checkoutSession = event.data.object;
-          console.log('❌ Async payment failed:', checkoutSession.id);
-
-          const payment = await Payment.findOne({
-            stripePaymentIntentId: checkoutSession.id
-          });
-
-          // Only update if still pending (idempotent)
-          if (payment && payment.status === 'pending') {
-            payment.status = 'failed';
-            await payment.save();
-
-            logPaymentFailure({
-              paymentId: payment._id.toString(),
-              userId: payment.user.toString(),
-              amount: payment.amount,
-              error: 'Async payment failed',
-              errorType: 'async_payment_failed',
-              stripePaymentIntentId: checkoutSession.id
-            });
-          }
-        }
+        await handleAsyncPaymentFailed(event.data.object);
         break;
 
       default:
-        console.log('ℹ️ Unhandled webhook event type:', event.type);
+        logger.info('Unhandled webhook event type', { type: event.type });
     }
 
     // Return success to Stripe
     res.json({ received: true });
 
   } catch (error) {
-    console.error('❌ Webhook processing error:', error);
+    logger.error('Webhook processing error', {
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+      eventType: event?.type,
+    });
+    
     res.status(500).json({
       success: false,
       message: 'Webhook processing failed',

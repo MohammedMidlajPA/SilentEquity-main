@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Routes, Route, Link, Outlet, useNavigate } from "react-router-dom";
 
 import WebinarPayment from './pages/WebinarPayment';
+import ErrorBoundary from './components/ErrorBoundary';
+import logger from './utils/logger';
 
 
 
@@ -66,7 +68,7 @@ function WebinarPanel() {
       // Use proxy if available, otherwise direct connection  
       const API_BASE_URL = '/api'; // Vite proxy handles CORS
       
-      console.log('🔄 Creating checkout session...', API_BASE_URL);
+      logger.info('Creating checkout session', { apiUrl: API_BASE_URL });
       
       const response = await fetch(`${API_BASE_URL}/payment/create-checkout-session`, {
         method: 'POST',
@@ -77,42 +79,36 @@ function WebinarPanel() {
         body: JSON.stringify({})
       });
 
-      console.log('📡 Response status:', response.status, response.statusText);
+      logger.debug('Response received', { status: response.status, statusText: response.statusText });
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('❌ Response error:', errorText);
         let errorData;
         try {
           errorData = JSON.parse(errorText);
         } catch {
           errorData = { message: `Server error: ${response.status} ${response.statusText}` };
         }
-        console.error('❌ API Error:', errorData);
+        logger.error('API error', new Error(errorData.message || 'Unknown error'), { status: response.status, errorData });
         alert('Failed to start payment: ' + (errorData.message || `Error ${response.status}. Please try again.`));
         setIsLoading(false);
         return;
       }
 
       const data = await response.json();
-      console.log('✅ Checkout session created:', data);
+      logger.info('Checkout session created', { sessionId: data.sessionId });
       
       if (data.success && data.checkoutUrl) {
         // Redirect directly to Stripe Checkout
-        console.log('🔗 Redirecting to Stripe:', data.checkoutUrl);
+        logger.info('Redirecting to Stripe', { checkoutUrl: data.checkoutUrl });
         window.location.href = data.checkoutUrl;
       } else {
-        console.error('❌ Invalid response:', data);
+        logger.error('Invalid response', new Error('Invalid checkout session response'), { data });
         alert('Failed to create payment session. Response: ' + JSON.stringify(data));
         setIsLoading(false);
       }
     } catch (error) {
-      console.error('❌ Error creating checkout session:', error);
-      console.error('❌ Error details:', {
-        name: error.name,
-        message: error.message,
-        stack: error.stack
-      });
+      logger.error('Error creating checkout session', error, { apiUrl: API_BASE_URL });
       alert('Connection error: ' + error.message + '\n\nMake sure backend is running on port 5001');
       setIsLoading(false);
     }
@@ -517,8 +513,7 @@ function HomePage() {
       // Use Vite proxy to avoid CORS issues
       const API_BASE_URL = '/api';
       
-      console.log('🔄 Creating checkout session for waitlist...');
-      console.log('🌐 API URL:', `${API_BASE_URL}/payment/create-checkout-session`);
+      logger.info('Creating checkout session for waitlist', { apiUrl: `${API_BASE_URL}/payment/create-checkout-session` });
       
       const response = await fetch(`${API_BASE_URL}/payment/create-checkout-session`, {
         method: 'POST',
@@ -538,26 +533,26 @@ function HomePage() {
         } catch {
           errorData = { message: `Server error: ${response.status}` };
         }
-        console.error('❌ API Error:', errorData);
+        logger.error('API error', new Error(errorData.message || 'Unknown error'), { status: response.status, errorData });
         alert('Failed to start payment: ' + (errorData.message || 'Please try again.'));
         setIsLoading(false);
         return;
       }
 
       const data = await response.json();
-      console.log('✅ Checkout session created:', data);
+      logger.info('Checkout session created', { sessionId: data.sessionId });
       
       if (data.success && data.checkoutUrl) {
         // Redirect directly to Stripe Checkout
-        console.log('🔗 Redirecting to Stripe:', data.checkoutUrl);
+        logger.info('Redirecting to Stripe', { checkoutUrl: data.checkoutUrl });
         window.location.href = data.checkoutUrl;
       } else {
-        console.error('❌ Invalid response:', data);
+        logger.error('Invalid response', new Error('Invalid checkout session response'), { data });
         alert('Failed to create payment session. Please try again.');
         setIsLoading(false);
       }
     } catch (error) {
-      console.error('❌ Error creating checkout session:', error);
+      logger.error('Error creating checkout session', error);
       alert('Connection error: ' + error.message + '\n\nMake sure backend is running on port 5001');
       setIsLoading(false);
     }
@@ -613,13 +608,15 @@ function ContactPage() {
 /* Routes */
 export default function App() {
   return (
-    <Routes>
-      <Route element={<RootLayout />}>
-        <Route index element={<HomePage />} />
-        
-        <Route path="/payment" element={<WebinarPayment />} />
-        
-      </Route>
-    </Routes>
+    <ErrorBoundary>
+      <Routes>
+        <Route element={<RootLayout />}>
+          <Route index element={<HomePage />} />
+          
+          <Route path="/payment" element={<WebinarPayment />} />
+          
+        </Route>
+      </Routes>
+    </ErrorBoundary>
   );
 }

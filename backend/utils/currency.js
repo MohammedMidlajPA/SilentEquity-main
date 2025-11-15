@@ -5,9 +5,11 @@
 
 const https = require('https');
 const http = require('http');
+const { logger } = require('./logger');
+const constants = require('../config/constants');
 
-// Cache exchange rate for 1 hour (3600000 ms)
-const RATE_CACHE_DURATION = 60 * 60 * 1000;
+// Cache exchange rate
+const RATE_CACHE_DURATION = constants.EXCHANGE_RATE_CACHE_TTL_MS;
 let cachedRate = null;
 let cacheTimestamp = null;
 
@@ -65,16 +67,16 @@ async function getUSDToINRRate() {
 
     cachedRate = rate;
     cacheTimestamp = now;
-    console.log(`✅ Exchange rate fetched: 1 USD = ${rate.toFixed(2)} INR`);
+    logger.info('Exchange rate fetched', { rate: rate.toFixed(2), currency: 'USD to INR' });
     return rate;
     
   } catch (error) {
-    console.warn('⚠️ Failed to fetch exchange rate from API:', error.message);
+    logger.warn('Failed to fetch exchange rate from API', { error: error.message });
   }
 
   // Fallback to default rate if API fails
   const defaultRate = parseFloat(process.env.DEFAULT_USD_TO_INR_RATE) || 83;
-  console.log(`⚠️ Using default exchange rate: 1 USD = ${defaultRate} INR`);
+  logger.warn('Using default exchange rate', { rate: defaultRate, currency: 'USD to INR' });
   
   // Cache the default rate
   cachedRate = defaultRate;

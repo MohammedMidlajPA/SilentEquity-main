@@ -1,4 +1,6 @@
 const nodemailer = require('nodemailer');
+const { logger } = require('./logger');
+const constants = require('../config/constants');
 
 /**
  * Email Configuration and Sending Utility
@@ -14,10 +16,10 @@ const transporter = nodemailer.createTransport({
     pass: process.env.EMAIL_PASSWORD
   },
   pool: true, // Use connection pooling
-  maxConnections: 5, // Maximum number of connections
-  maxMessages: 100, // Maximum number of messages per connection
-  rateDelta: 1000, // Time window for rate limiting
-  rateLimit: 5, // Maximum number of messages per rateDelta
+  maxConnections: constants.EMAIL_MAX_CONNECTIONS,
+  maxMessages: constants.EMAIL_MAX_MESSAGES,
+  rateDelta: constants.EMAIL_RATE_DELTA,
+  rateLimit: constants.EMAIL_RATE_LIMIT,
 });
 
 /**
@@ -26,10 +28,10 @@ const transporter = nodemailer.createTransport({
 const testEmailConfig = async () => {
   try {
     await transporter.verify();
-    console.log('✅ Email configuration verified');
+    logger.info('Email configuration verified');
     return true;
   } catch (error) {
-    console.error('❌ Email configuration error:', error.message);
+    logger.error('Email configuration error', { error: error.message });
     return false;
   }
 };
@@ -357,10 +359,14 @@ const sendPaymentConfirmationEmail = async (paymentData) => {
 
   try {
     const info = await transporter.sendMail(mailOptions);
-    console.log('✅ Email with receipt sent successfully:', info.messageId);
+    logger.info('Email with receipt sent successfully', { messageId: info.messageId, to: userEmail });
     return { success: true, messageId: info.messageId };
   } catch (error) {
-    console.error('❌ Email sending error:', error);
+    logger.error('Email sending error', { 
+      error: error.message,
+      to: userEmail,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+    });
     return { success: false, error: error.message };
   }
 };

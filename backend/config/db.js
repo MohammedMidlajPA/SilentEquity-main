@@ -1,4 +1,6 @@
 const mongoose = require('mongoose');
+const { logger } = require('../utils/logger');
+const constants = require('./constants');
 
 /**
  * Connect to MongoDB Database
@@ -13,29 +15,31 @@ const connectDB = async () => {
     const conn = await mongoose.connect(process.env.MONGODB_URI, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
-      maxPoolSize: 10, // Maintain up to 10 socket connections
-      serverSelectionTimeoutMS: 5000, // Keep trying to send operations for 5 seconds
-      socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
+      maxPoolSize: constants.MONGODB_MAX_POOL_SIZE,
+      serverSelectionTimeoutMS: constants.MONGODB_SERVER_SELECTION_TIMEOUT_MS,
+      socketTimeoutMS: constants.MONGODB_SOCKET_TIMEOUT_MS,
     });
 
-    console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
-    console.log(`📊 Database: ${conn.connection.name}`);
+    logger.info('MongoDB connected', {
+      host: conn.connection.host,
+      database: conn.connection.name,
+    });
 
     // Handle connection events
     mongoose.connection.on('error', (err) => {
-      console.error('❌ MongoDB connection error:', err);
+      logger.error('MongoDB connection error', { error: err.message });
     });
 
     mongoose.connection.on('disconnected', () => {
-      console.warn('⚠️ MongoDB disconnected');
+      logger.warn('MongoDB disconnected');
     });
 
     mongoose.connection.on('reconnected', () => {
-      console.log('✅ MongoDB reconnected');
+      logger.info('MongoDB reconnected');
     });
 
   } catch (error) {
-    console.error(`❌ MongoDB Connection Error: ${error.message}`);
+    logger.error('MongoDB connection error', { error: error.message });
     process.exit(1);
   }
 };

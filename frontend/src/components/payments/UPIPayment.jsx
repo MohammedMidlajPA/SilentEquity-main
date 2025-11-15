@@ -102,7 +102,6 @@ const UPIPayment = memo(({ webinarData, onPaymentSuccess, onPaymentError, apiBas
       }
 
     } catch (err) {
-      console.error('UPI payment error:', err);
       const errorMsg = err.message || 'UPI payment failed. Please try again.';
       setError(errorMsg);
       onPaymentError && onPaymentError(errorMsg);

@@ -3,6 +3,8 @@
  * Validates all required environment variables at startup
  */
 
+const { logger } = require('./logger');
+
 function validateEnvironment() {
   const required = [
     'MONGODB_URI',
@@ -86,21 +88,14 @@ function logValidationResults() {
   const result = validateEnvironment();
   
   if (!result.valid) {
-    console.error('❌ Missing required environment variables:');
-    result.missing.forEach(key => {
-      console.error(`   - ${key}`);
-    });
-    console.error('\nPlease set all required environment variables in your .env file');
+    logger.error('Missing required environment variables', { missing: result.missing });
     return false;
   }
 
   if (result.warnings.length > 0) {
-    console.warn('⚠️ Environment variable warnings:');
-    result.warnings.forEach(warning => {
-      console.warn(`   - ${warning}`);
-    });
+    logger.warn('Environment variable warnings', { warnings: result.warnings });
   } else {
-    console.log('✅ All environment variables validated');
+    logger.info('All environment variables validated');
   }
 
   return true;

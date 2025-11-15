@@ -7,13 +7,15 @@ const connectDB = require('./config/db');
 const { testStripeConnection } = require('./config/stripe');
 const { testEmailConfig } = require('./utils/email');
 const { logValidationResults } = require('./utils/envValidator');
+const { logger } = require('./utils/logger');
+const constants = require('./config/constants');
 
 // Load environment variables
 dotenv.config();
 
 // Validate environment variables
 if (!logValidationResults()) {
-  console.error('❌ Environment validation failed. Exiting...');
+  logger.error('Environment validation failed. Exiting...');
   process.exit(1);
 }
 
@@ -25,12 +27,12 @@ connectDB();
 
 // Test Stripe connection (non-blocking)
 testStripeConnection().catch(err => {
-  console.error('⚠️ Stripe connection test failed:', err.message);
+  logger.warn('Stripe connection test failed', { error: err.message });
 });
 
 // Test email configuration (non-blocking)
 testEmailConfig().catch(err => {
-  console.error('⚠️ Email configuration test failed:', err.message);
+  logger.warn('Email configuration test failed', { error: err.message });
 });
 
 // Security middleware
@@ -41,8 +43,8 @@ app.use(helmet({
 
 // General rate limiting
 const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  windowMs: constants.RATE_LIMIT_WINDOW_MS,
+  max: constants.RATE_LIMIT_MAX_REQUESTS,
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
@@ -50,8 +52,8 @@ const generalLimiter = rateLimit({
 
 // Stricter rate limiting for payment endpoints
 const paymentLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 20, // Limit each IP to 20 payment requests per 15 minutes
+  windowMs: constants.RATE_LIMIT_WINDOW_MS,
+  max: constants.PAYMENT_RATE_LIMIT_MAX,
   message: 'Too many payment requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
@@ -74,22 +76,19 @@ const allowedOrigins = [
   'http://127.0.0.1:3000'
 ].filter(Boolean);
 
-// CORS - Allow all origins in development for easier testing
+// CORS configuration - Always check whitelist
 app.use(cors({
   origin: function (origin, callback) {
-    // In development, allow all origins for easier testing
-    if (process.env.NODE_ENV === 'development') {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) {
       return callback(null, true);
     }
     
-    // In production, check allowed origins
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    // Check if origin is in allowed list
+    if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      console.log('⚠️ CORS blocked origin:', origin);
-      console.log('✅ Allowed origins:', allowedOrigins);
+      logger.warn('CORS blocked origin', { origin, allowedOrigins });
       callback(new Error('Not allowed by CORS'));
     }
   },
@@ -100,8 +99,8 @@ app.use(cors({
 
 // Body parsing middleware
 // Note: Webhook route needs raw body, so it's handled in the route itself
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: constants.MAX_REQUEST_SIZE }));
+app.use(express.urlencoded({ extended: true, limit: constants.MAX_REQUEST_SIZE }));
 
 // Routes
 app.use('/api/payment', require('./routes/paymentRoutes'));
@@ -118,7 +117,13 @@ app.get('/api/health', (req, res) => {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('❌ Server Error:', err.stack);
+  logger.error('Server error', {
+    error: err.message,
+    stack: err.stack,
+    path: req.path,
+    method: req.method,
+  });
+  
   res.status(500).json({
     success: false,
     message: 'Something went wrong!',
@@ -135,12 +140,12 @@ app.use((req, res) => {
 });
 
 // Start server
-const PORT = process.env.PORT || 5001; // Changed to 5001 to avoid conflict with AirPlay
+const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => {
-  console.log('\n🚀 ================================');
-  console.log(`✅ Server running on port ${PORT}`);
-  console.log(`🌐 Frontend: ${process.env.FRONTEND_URL}`);
-  console.log(`📧 Email: ${process.env.EMAIL_USER}`);
-  console.log(`💳 Stripe: Connected`);
-  console.log('🚀 ================================\n');
+  logger.info('Server started', {
+    port: PORT,
+    frontendUrl: process.env.FRONTEND_URL,
+    email: process.env.EMAIL_USER,
+    environment: process.env.NODE_ENV,
+  });
 });

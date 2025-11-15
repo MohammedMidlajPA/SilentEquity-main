@@ -6,6 +6,7 @@ import {
   AnimatedBackground,
   SuccessScreen
 } from '../components/payments';
+import logger from '../utils/logger';
 
 // ✅ Use live API base URL from environment (automatically picks .env.production)
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5001/api';
@@ -53,7 +54,7 @@ const WebinarPayment = () => {
             setError('Payment not completed. Please try again or contact support.');
           }
         } catch (err) {
-          console.error('❌ Error verifying payment:', err);
+          logger.error('Error verifying payment', err, { sessionId });
           // If verification fails, assume success (webhook might still be processing)
           setTimeout(() => {
             setPaymentVerified(true);

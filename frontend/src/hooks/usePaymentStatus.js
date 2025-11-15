@@ -53,7 +53,7 @@ export const usePaymentStatus = (paymentIntentId, apiBaseUrl, enabled = true) =>
           }
         }
       } catch (err) {
-        console.error('Error polling payment status:', err);
+        // Error will be handled by component state
         setError(err.message);
       }
     }, 2000);

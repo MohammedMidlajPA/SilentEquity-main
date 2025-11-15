@@ -1,10 +1,12 @@
 require('dotenv').config(); // Load env vars at the top of this file
 
 const Stripe = require('stripe');
+const { logger } = require('../utils/logger');
+const constants = require('./constants');
 
 // Validate that the key exists
 if (!process.env.STRIPE_SECRET_KEY) {
-  console.error('❌ ERROR: STRIPE_SECRET_KEY is not defined in .env file');
+  logger.error('STRIPE_SECRET_KEY is not defined in .env file');
   process.exit(1);
 }
 
@@ -14,14 +16,14 @@ const isTestMode = process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_');
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2024-12-18.acacia', // Use latest stable API version
   maxNetworkRetries: 2, // Retry failed requests up to 2 times
-  timeout: 20000, // 20 second timeout
+  timeout: constants.STRIPE_API_TIMEOUT_MS,
 });
 
 // Log Stripe mode
 if (isTestMode) {
-  console.log('⚠️ Stripe is in TEST mode');
+  logger.info('Stripe is in TEST mode');
 } else {
-  console.log('✅ Stripe is in LIVE mode');
+  logger.info('Stripe is in LIVE mode');
 }
 
 /**
@@ -33,10 +35,10 @@ if (isTestMode) {
 const testStripeConnection = async () => {
   try {
     const account = await stripe.accounts.retrieve();
-    console.log('✅ Stripe Connected: Account Active');
+    logger.info('Stripe connected', { accountId: account.id, mode: isTestMode ? 'test' : 'live' });
     return true;
   } catch (error) {
-    console.error('❌ Stripe Connection Error:', error.message);
+    logger.error('Stripe connection error', { error: error.message });
     return false;
   }
 };

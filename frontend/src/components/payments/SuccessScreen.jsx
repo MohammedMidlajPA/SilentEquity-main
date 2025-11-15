@@ -1,10 +1,11 @@
 import React, { memo } from 'react';
 import { CheckCircle, Mail } from 'lucide-react';
+import logger from '../../utils/logger';
 
 /**
  * SuccessScreen Component - Payment Success with Email Emphasis
  */
-const SuccessScreen = memo(({ onDashboard = () => console.log('Dashboard clicked') }) => {
+const SuccessScreen = memo(({ onDashboard = () => logger.debug('Dashboard clicked') }) => {
   return (
     <div style={{
       display: 'flex',
