@@ -16,7 +16,8 @@ const userSchema = new mongoose.Schema({
     unique: true,
     lowercase: true,
     trim: true,
-    match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email']
+    match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email'],
+    index: true
   },
   phone: {
     type: String,
@@ -33,7 +34,6 @@ const userSchema = new mongoose.Schema({
   }
 });
 
-// Index for faster queries
-userSchema.index({ email: 1 });
+// Note: email index is already defined in schema above (unique: true creates index)
 
 module.exports = mongoose.model('User', userSchema);

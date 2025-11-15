@@ -13,27 +13,32 @@ const constants = require('./config/constants');
 // Load environment variables
 dotenv.config();
 
-// Validate environment variables
-if (!logValidationResults()) {
-  logger.error('Environment validation failed. Exiting...');
-  process.exit(1);
-}
-
 // Initialize Express app
 const app = express();
 
-// Connect to MongoDB
-connectDB();
+// Only validate and connect in non-test environments
+if (process.env.NODE_ENV !== 'test') {
+  // Validate environment variables
+  if (!logValidationResults()) {
+    logger.error('Environment validation failed. Exiting...');
+    process.exit(1);
+  }
 
-// Test Stripe connection (non-blocking)
-testStripeConnection().catch(err => {
-  logger.warn('Stripe connection test failed', { error: err.message });
-});
+  // Connect to MongoDB
+  connectDB().catch(() => {
+    // Error already logged in connectDB
+  });
 
-// Test email configuration (non-blocking)
-testEmailConfig().catch(err => {
-  logger.warn('Email configuration test failed', { error: err.message });
-});
+  // Test Stripe connection (non-blocking)
+  testStripeConnection().catch(err => {
+    logger.warn('Stripe connection test failed', { error: err.message });
+  });
+
+  // Test email configuration (non-blocking)
+  testEmailConfig().catch(err => {
+    logger.warn('Email configuration test failed', { error: err.message });
+  });
+}
 
 // Security middleware
 app.use(helmet({
@@ -139,13 +144,18 @@ app.use((req, res) => {
   });
 });
 
-// Start server
-const PORT = process.env.PORT || 5001;
-app.listen(PORT, () => {
-  logger.info('Server started', {
-    port: PORT,
-    frontendUrl: process.env.FRONTEND_URL,
-    email: process.env.EMAIL_USER,
-    environment: process.env.NODE_ENV,
+// Start server only if not in test mode and not imported as module
+if (process.env.NODE_ENV !== 'test' && require.main === module) {
+  const PORT = process.env.PORT || 5001;
+  app.listen(PORT, () => {
+    logger.info('Server started', {
+      port: PORT,
+      frontendUrl: process.env.FRONTEND_URL,
+      email: process.env.EMAIL_USER,
+      environment: process.env.NODE_ENV,
+    });
   });
-});
+}
+
+// Export app for testing
+module.exports = app;

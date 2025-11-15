@@ -4,39 +4,11 @@
  */
 
 const request = require('supertest');
-const mongoose = require('mongoose');
 
-// Mock environment variables before requiring server
-process.env.NODE_ENV = 'test';
-process.env.MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/test';
-process.env.STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || 'sk_test_mock';
-process.env.STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || 'whsec_mock';
-process.env.FRONTEND_URL = 'http://localhost:5174';
-process.env.WEBINAR_PRICE = '4.5';
-process.env.EMAIL_HOST = 'smtp.test.com';
-process.env.EMAIL_USER = 'test@test.com';
-process.env.EMAIL_PASSWORD = 'test';
-process.env.EMAIL_FROM = 'Test <test@test.com>';
-
-// Note: In a real test setup, you would mock Stripe
-// For now, these are basic structure tests
+// Import app (setup.js already configured env vars)
+const app = require('../server');
 
 describe('Payment API', () => {
-  let app;
-
-  beforeAll(async () => {
-    // Import app after env vars are set
-    app = require('../server');
-    
-    // Wait for MongoDB connection
-    await new Promise(resolve => setTimeout(resolve, 1000));
-  });
-
-  afterAll(async () => {
-    // Close MongoDB connection
-    await mongoose.connection.close();
-  });
-
   describe('Health Check', () => {
     test('GET /api/health should return 200', async () => {
       const response = await request(app)
@@ -45,19 +17,23 @@ describe('Payment API', () => {
       
       expect(response.body).toHaveProperty('success');
       expect(response.body.success).toBe(true);
+      expect(response.body).toHaveProperty('message');
+      expect(response.body).toHaveProperty('timestamp');
+      expect(response.body.environment).toBe('test');
     });
   });
 
   describe('Create Checkout Session', () => {
-    test('POST /api/payment/create-checkout-session should require valid environment', async () => {
-      // This test will fail if env vars are not set
-      // In real tests, you would mock Stripe
+    test('POST /api/payment/create-checkout-session should return error without Stripe', async () => {
+      // Without real Stripe credentials, this should fail gracefully
       const response = await request(app)
         .post('/api/payment/create-checkout-session')
-        .send({});
+        .send({})
+        .expect(500);
       
-      // Should either succeed (if Stripe is configured) or fail gracefully
-      expect([200, 500]).toContain(response.status);
+      expect(response.body).toHaveProperty('success');
+      expect(response.body.success).toBe(false);
+      expect(response.body).toHaveProperty('message');
     });
   });
 
@@ -69,6 +45,7 @@ describe('Payment API', () => {
       
       expect(response.body).toHaveProperty('success');
       expect(response.body.success).toBe(false);
+      expect(response.body).toHaveProperty('message');
     });
 
     test('GET /api/payment/verify-session should require sessionId', async () => {
@@ -78,6 +55,33 @@ describe('Payment API', () => {
       
       expect(response.body).toHaveProperty('success');
       expect(response.body.success).toBe(false);
+    });
+
+    test('GET /api/payment/verify-session should handle non-existent Stripe session', async () => {
+      // Valid format (cs_ + 24+ alphanumeric chars) but non-existent session
+      // Session ID must be at least 24 alphanumeric characters after cs_ prefix
+      // Use all alphanumeric characters (no underscores)
+      const validFormatSessionId = 'cs_test' + 'a'.repeat(24);
+      const response = await request(app)
+        .get(`/api/payment/verify-session?sessionId=${validFormatSessionId}`);
+      
+      // Without real Stripe credentials, this may return 400 (invalid key) or 404 (session not found)
+      // Both are acceptable - the important thing is it doesn't crash
+      expect([400, 404, 500]).toContain(response.status);
+      expect(response.body).toHaveProperty('success');
+      expect(response.body.success).toBe(false);
+    });
+  });
+
+  describe('404 Handler', () => {
+    test('GET /api/nonexistent should return 404', async () => {
+      const response = await request(app)
+        .get('/api/nonexistent')
+        .expect(404);
+      
+      expect(response.body).toHaveProperty('success');
+      expect(response.body.success).toBe(false);
+      expect(response.body.message).toBe('Route not found');
     });
   });
 });

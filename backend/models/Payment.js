@@ -25,9 +25,8 @@ const paymentSchema = new mongoose.Schema({
   // Stripe payment details
   stripePaymentIntentId: {
     type: String,
-    required: true,
+    required: true
     // Not unique - UPI payments may use payment links with same ID
-    index: true
   },
   stripeChargeId: {
     type: String
@@ -74,7 +73,7 @@ const paymentSchema = new mongoose.Schema({
   }
 });
 
-// Index for faster queries
+// Indexes for faster queries
 paymentSchema.index({ user: 1, status: 1 });
 paymentSchema.index({ stripePaymentIntentId: 1 });
 paymentSchema.index({ userEmail: 1 });
