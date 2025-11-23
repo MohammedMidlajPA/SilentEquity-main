@@ -69,6 +69,7 @@ const paymentLimiter = rateLimit({
 app.use('/api/', generalLimiter);
 app.use('/api/payment/create-checkout-session', paymentLimiter);
 app.use('/api/payment/verify-session', paymentLimiter);
+app.use('/api/course/join', paymentLimiter);
 
 // CORS configuration
 const allowedOrigins = [
@@ -102,6 +103,75 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With']
 }));
 
+// Performance monitoring middleware - track response times
+app.use((req, res, next) => {
+  const startTime = Date.now();
+  
+  // Log response time when response finishes
+  res.on('finish', () => {
+    const responseTime = Date.now() - startTime;
+    const isSlowRequest = responseTime > 1000; // Log slow requests (>1s)
+    
+    if (isSlowRequest) {
+      const { analyzeSlowRequest, getPerformanceRecommendations } = require('./utils/performanceAnalyzer');
+      
+      logger.warn('Slow request detected', {
+        method: req.method,
+        path: req.path,
+        responseTimeMs: responseTime,
+        statusCode: res.statusCode,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Analyze slow request and provide recommendations
+      const analysis = analyzeSlowRequest({
+        method: req.method,
+        path: req.path,
+        responseTimeMs: responseTime,
+        statusCode: res.statusCode
+      });
+      
+      const recommendations = getPerformanceRecommendations(responseTime);
+      if (recommendations.length > 0) {
+        logger.info('Performance recommendations', {
+          path: req.path,
+          responseTimeMs: responseTime,
+          recommendations
+        });
+      }
+    } else {
+      logger.debug('Request processed', {
+        method: req.method,
+        path: req.path,
+        responseTimeMs: responseTime,
+        statusCode: res.statusCode
+      });
+    }
+  });
+  
+  next();
+});
+
+// Request timeout middleware
+app.use((req, res, next) => {
+  const timeout = setTimeout(() => {
+    if (!res.headersSent) {
+      logger.error('Request timeout', {
+        method: req.method,
+        path: req.path,
+        timeoutMs: constants.REQUEST_TIMEOUT_MS
+      });
+      res.status(504).json({
+        success: false,
+        message: 'Request timeout. Please try again.'
+      });
+    }
+  }, constants.REQUEST_TIMEOUT_MS);
+  
+  res.on('finish', () => clearTimeout(timeout));
+  next();
+});
+
 // Body parsing middleware
 // Note: Webhook route needs raw body, so it's handled in the route itself
 app.use(express.json({ limit: constants.MAX_REQUEST_SIZE }));
@@ -109,6 +179,7 @@ app.use(express.urlencoded({ extended: true, limit: constants.MAX_REQUEST_SIZE }
 
 // Routes
 app.use('/api/payment', require('./routes/paymentRoutes'));
+app.use('/api/course', require('./routes/courseRoutes'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

@@ -10,21 +10,24 @@ if (!process.env.STRIPE_SECRET_KEY) {
   process.exit(1);
 }
 
+const rawStripeKey = process.env.STRIPE_SECRET_KEY;
+const isProduction = process.env.NODE_ENV === 'production';
+const isTestMode = rawStripeKey?.startsWith('sk_test_');
+
+if (isProduction && isTestMode) {
+  logger.error('Production server attempted to start with a Stripe TEST key. Please supply sk_live_ credentials.');
+  process.exit(1);
+}
+
 // Initialize Stripe with API version
-// Use test or live keys based on environment
-const isTestMode = process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_');
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+const stripe = new Stripe(rawStripeKey, {
   apiVersion: '2024-12-18.acacia', // Use latest stable API version
   maxNetworkRetries: 2, // Retry failed requests up to 2 times
   timeout: constants.STRIPE_API_TIMEOUT_MS,
 });
 
 // Log Stripe mode
-if (isTestMode) {
-  logger.info('Stripe is in TEST mode');
-} else {
-  logger.info('Stripe is in LIVE mode');
-}
+logger.info(`Stripe initialized in ${isTestMode ? 'TEST' : 'LIVE'} mode`);
 
 /**
  * Stripe Configuration

@@ -7,22 +7,22 @@ module.exports = {
   // Checkout Session Configuration
   CHECKOUT_SESSION_EXPIRY_HOURS: 24,
   
-  // Rate Limiting
+  // Rate Limiting (Optimized for 10k+ concurrent users)
   RATE_LIMIT_WINDOW_MS: 15 * 60 * 1000, // 15 minutes
-  RATE_LIMIT_MAX_REQUESTS: 100,
-  PAYMENT_RATE_LIMIT_MAX: 20,
+  RATE_LIMIT_MAX_REQUESTS: 500, // Increased from 100 to handle high traffic (5x)
+  PAYMENT_RATE_LIMIT_MAX: 100, // Increased from 20 to handle payment spikes (5x)
   
-  // Request Timeouts
-  REQUEST_TIMEOUT_MS: 10000, // 10 seconds
-  STRIPE_API_TIMEOUT_MS: 10000,
+  // Request Timeouts (Optimized for high load)
+  REQUEST_TIMEOUT_MS: 15000, // Increased from 10s to 15s for high traffic scenarios
+  STRIPE_API_TIMEOUT_MS: 10000, // Keep Stripe timeout at 10s (optimal)
   
-  // Database
-  MONGODB_MAX_POOL_SIZE: 10,
+  // Database (Optimized for concurrent operations)
+  MONGODB_MAX_POOL_SIZE: 50, // Increased from 10 to handle concurrent database operations (5x)
   MONGODB_SERVER_SELECTION_TIMEOUT_MS: 5000,
   MONGODB_SOCKET_TIMEOUT_MS: 45000,
   
-  // Email
-  EMAIL_MAX_CONNECTIONS: 5,
+  // Email (Optimized for high-volume email sending)
+  EMAIL_MAX_CONNECTIONS: 20, // Increased from 5 to send emails without delay (4x)
   EMAIL_MAX_MESSAGES: 100,
   EMAIL_RATE_DELTA: 1000,
   EMAIL_RATE_LIMIT: 5,

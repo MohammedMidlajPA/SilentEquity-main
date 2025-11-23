@@ -18,6 +18,9 @@ process.env.EMAIL_USER = 'test@test.com';
 process.env.EMAIL_PASSWORD = 'test_password';
 process.env.EMAIL_FROM = 'Test <test@test.com>';
 process.env.DEFAULT_USD_TO_INR_RATE = '83';
+process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://example.supabase.co';
+process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'service-role-key';
+process.env.STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID || 'price_test_123';
 
 // Suppress console output during tests (Winston will still log)
 if (process.env.SUPPRESS_LOGS !== 'false') {

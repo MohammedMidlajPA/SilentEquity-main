@@ -32,3 +32,15 @@ describe('App Structure', () => {
   });
 });
 
+describe('Course routes', () => {
+  test('should validate join payload before processing', async () => {
+    const response = await request(app)
+      .post('/api/course/join')
+      .send({});
+
+    expect(response.status).toBe(400);
+    expect(response.body.success).toBe(false);
+    expect(Array.isArray(response.body.errors)).toBe(true);
+  });
+});
+

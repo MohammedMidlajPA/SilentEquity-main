@@ -47,6 +47,9 @@ echo ""
 read -p "Stripe Secret Key (sk_live_...): " STRIPE_SECRET_KEY
 read -p "Stripe Publishable Key (pk_live_...): " STRIPE_PUBLISHABLE_KEY
 read -p "Stripe Webhook Secret (whsec_...): " STRIPE_WEBHOOK_SECRET
+read -p "Stripe Price ID (price_...): " STRIPE_PRICE_ID
+read -p "Supabase URL (https://xyzcompany.supabase.co): " SUPABASE_URL
+read -p "Supabase Service Role Key: " SUPABASE_SERVICE_ROLE_KEY
 read -p "Production Frontend URL (e.g., https://yourdomain.com): " FRONTEND_URL
 read -p "Production API URL (e.g., https://api.yourdomain.com/api): " API_URL
 
@@ -75,12 +78,18 @@ echo "🔄 Updating backend/.env..."
 # Update backend .env
 sed -i.bak "s|STRIPE_SECRET_KEY=.*|STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY|" "$BACKEND_ENV"
 sed -i.bak "s|STRIPE_WEBHOOK_SECRET=.*|STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET|" "$BACKEND_ENV"
+sed -i.bak "s|STRIPE_PRICE_ID=.*|STRIPE_PRICE_ID=$STRIPE_PRICE_ID|" "$BACKEND_ENV"
+sed -i.bak "s|SUPABASE_URL=.*|SUPABASE_URL=$SUPABASE_URL|" "$BACKEND_ENV"
+sed -i.bak "s|SUPABASE_SERVICE_ROLE_KEY=.*|SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY|" "$BACKEND_ENV"
 sed -i.bak "s|FRONTEND_URL=.*|FRONTEND_URL=$FRONTEND_URL|" "$BACKEND_ENV"
 sed -i.bak "s|NODE_ENV=.*|NODE_ENV=production|" "$BACKEND_ENV"
 
 # Add if not exists
 grep -q "^STRIPE_SECRET_KEY=" "$BACKEND_ENV" || echo "STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY" >> "$BACKEND_ENV"
 grep -q "^STRIPE_WEBHOOK_SECRET=" "$BACKEND_ENV" || echo "STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET" >> "$BACKEND_ENV"
+grep -q "^STRIPE_PRICE_ID=" "$BACKEND_ENV" || echo "STRIPE_PRICE_ID=$STRIPE_PRICE_ID" >> "$BACKEND_ENV"
+grep -q "^SUPABASE_URL=" "$BACKEND_ENV" || echo "SUPABASE_URL=$SUPABASE_URL" >> "$BACKEND_ENV"
+grep -q "^SUPABASE_SERVICE_ROLE_KEY=" "$BACKEND_ENV" || echo "SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY" >> "$BACKEND_ENV"
 grep -q "^FRONTEND_URL=" "$BACKEND_ENV" || echo "FRONTEND_URL=$FRONTEND_URL" >> "$BACKEND_ENV"
 grep -q "^NODE_ENV=" "$BACKEND_ENV" || echo "NODE_ENV=production" >> "$BACKEND_ENV"
 

@@ -7,7 +7,6 @@ const { logger } = require('./logger');
 
 function validateEnvironment() {
   const required = [
-    'MONGODB_URI',
     'STRIPE_SECRET_KEY',
     'STRIPE_WEBHOOK_SECRET',
     'FRONTEND_URL',
@@ -16,11 +15,15 @@ function validateEnvironment() {
     'EMAIL_HOST',
     'EMAIL_USER',
     'EMAIL_PASSWORD',
-    'EMAIL_FROM'
+    'EMAIL_FROM',
+    'SUPABASE_URL',
+    'SUPABASE_SERVICE_ROLE_KEY',
+    'STRIPE_PRICE_ID'
   ];
 
   const missing = [];
   const warnings = [];
+  const isProduction = process.env.NODE_ENV === 'production';
 
   // Check required variables
   required.forEach(key => {
@@ -28,6 +31,11 @@ function validateEnvironment() {
       missing.push(key);
     }
   });
+
+  // MongoDB is optional (we're using Supabase)
+  if (!process.env.MONGODB_URI) {
+    warnings.push('MONGODB_URI missing: MongoDB features disabled (using Supabase)');
+  }
 
   // Check Stripe key format
   if (process.env.STRIPE_SECRET_KEY) {
@@ -74,6 +82,15 @@ function validateEnvironment() {
       new URL(process.env.FRONTEND_URL);
     } catch (e) {
       warnings.push('FRONTEND_URL must be a valid URL');
+    }
+  }
+
+  // Check Supabase URL format
+  if (process.env.SUPABASE_URL) {
+    try {
+      new URL(process.env.SUPABASE_URL);
+    } catch (e) {
+      warnings.push('SUPABASE_URL must be a valid URL');
     }
   }
 

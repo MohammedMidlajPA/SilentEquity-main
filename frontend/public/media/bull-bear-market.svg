@@ -1,0 +1,38 @@
+<svg width="832" height="494" viewBox="0 0 832 494" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Bull and Bear racing beneath an upward arrow</title>
+  <desc id="desc">Stylized illustration of a bull and bear moving in opposite directions with an upward arrow, representing market momentum.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#072927"/>
+      <stop offset="70%" stop-color="#041412"/>
+      <stop offset="100%" stop-color="#02100f"/>
+    </linearGradient>
+    <linearGradient id="arrow" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#d9f8ff"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="6" stdDeviation="14" flood-color="#1bdff2" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+  <rect width="832" height="494" fill="url(#bg)"/>
+  <g filter="url(#glow)">
+    <path d="M488 102h86l-3 114h82L534 346l4-112h-84z" fill="url(#arrow)"/>
+    <path d="M333 315l223-223v116h-86l-4 112z" fill="url(#arrow)"/>
+  </g>
+  <g fill="#f8fffb" opacity="0.95">
+    <path d="M231 294c-29 0-54-16-74-33-11-10-28-10-40-1l-20 15c-3 3-8 2-11-2l-13-25c-4-7 0-16 8-18l22-6c10-3 19-9 26-17l16-19c8-10 19-17 31-20l47-13c12-3 25-1 36 5l31 18c11 6 20 15 26 26l8 14c2 3 0 7-4 8l-30 6c-6 1-11 5-14 10l-11 19c-6 11-18 18-31 18z"/>
+    <path d="M612 356c-24 0-47-10-63-27l-12-12c-6-6-15-8-23-5l-37 13c-4 1-8-1-9-5l-7-23c-3-8 1-16 9-19l41-12c8-2 16-7 22-13l18-18c10-11 24-18 38-20l45-6c13-2 26 1 37 8l42 26c10 7 18 16 24 27l4 7c2 3 0 7-3 8l-36 10c-5 2-10 6-12 11l-9 19c-10 21-32 35-55 35z"/>
+  </g>
+</svg>
+
+
+
+
+
+
+
+
+
+
+

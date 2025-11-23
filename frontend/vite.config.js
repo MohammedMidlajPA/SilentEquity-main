@@ -18,15 +18,55 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: false,
-    minify: 'terser',
+    sourcemap: false, // Disable sourcemaps for production (smaller build)
+    minify: 'esbuild', // Fast minification
+    cssMinify: true, // Minify CSS
+    chunkSizeWarningLimit: 1000, // Warn if chunk exceeds 1MB
     rollupOptions: {
       output: {
-        manualChunks: {
-          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
-          'stripe-vendor': ['@stripe/stripe-js', '@stripe/react-stripe-js'],
+        manualChunks(id) {
+          // Split vendor chunks for better caching
+          if (!id.includes('node_modules')) return undefined;
+          
+          // React and React DOM
+          if (id.includes('react') || id.includes('react-dom')) {
+            return 'react-vendor';
+          }
+          
+          // Stripe libraries
+          if (id.includes('@stripe')) {
+            return 'stripe-vendor';
+          }
+          
+          // Three.js and Vanta (3D graphics)
+          if (id.includes('three') || id.includes('vanta')) {
+            return 'graphics-vendor';
+          }
+          
+          // Other large dependencies
+          if (id.includes('axios') || id.includes('react-router')) {
+            return 'utils-vendor';
+          }
+          
+          // Default vendor chunk
+          return 'vendor';
         },
+        // Optimize chunk file names
+        chunkFileNames: 'js/[name]-[hash].js',
+        entryFileNames: 'js/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash].[ext]'
       },
     },
+    // Production optimizations
+    terserOptions: {
+      compress: {
+        drop_console: true, // Remove console.log in production
+        drop_debugger: true
+      }
+    }
   },
+  // Optimize dependencies
+  optimizeDeps: {
+    include: ['react', 'react-dom', '@stripe/stripe-js', '@stripe/react-stripe-js']
+  }
 })

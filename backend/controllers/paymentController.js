@@ -52,6 +52,7 @@ exports.createCheckoutSession = async (req, res) => {
     // Stripe will collect customer name, email, and phone automatically
     // Using INR currency for Indian market (required for UPI)
     // UPI is enabled in Dashboard - Stripe will show it automatically
+    const startTime = Date.now();
     const checkoutSession = await stripe.checkout.sessions.create({
       // For Indian market: Stripe automatically shows Card + UPI when:
       // 1. Currency is INR
@@ -74,6 +75,10 @@ exports.createCheckoutSession = async (req, res) => {
       cancel_url: `${process.env.FRONTEND_URL}`,
       // Stripe will collect customer information (name, email, phone)
       billing_address_collection: 'required', // Collect billing address
+      // Enable automatic invoice creation and email sending
+      invoice_creation: {
+        enabled: true, // Stripe will automatically create and email invoices
+      },
       // Stripe will automatically send receipt email
       // Metadata will be populated from Stripe's collected data via webhook
       metadata: {
@@ -91,16 +96,21 @@ exports.createCheckoutSession = async (req, res) => {
           request_three_d_secure: 'automatic' // Stripe will show OTP modal when required
         }
       },
-      // EXPLICITLY ENABLE BOTH CARD AND UPI
-      // Note: UPI might not be available as direct payment_method_type
-      // Stripe will show Card + UPI dynamically if UPI is enabled in Dashboard
-      // Omitting payment_method_types lets Stripe show all eligible methods (Card + UPI)
-      // This ensures both Card and UPI appear when available
+      // Payment methods: Card, UPI (for INR), Amazon Pay (for supported currencies)
+      // Omitting payment_method_types lets Stripe auto-detect based on currency and location
+      // For INR: Card + UPI will appear (if enabled in Dashboard)
+      // For USD/EUR: Card + Google Pay + Amazon Pay will appear (if enabled in Dashboard)
+      // Google Pay is automatically enabled with cards (no code change needed)
+      // Note: Google Pay not available in India, Amazon Pay supports USD/EUR/GBP but not INR
       // Expire checkout session after configured hours
       expires_at: Math.floor(Date.now() / 1000) + (constants.CHECKOUT_SESSION_EXPIRY_HOURS * 60 * 60)
     });
     
-    logger.info('Checkout session created', { sessionId: checkoutSession.id });
+    const responseTime = Date.now() - startTime;
+    logger.info('Checkout session created', { 
+      sessionId: checkoutSession.id,
+      responseTimeMs: responseTime
+    });
 
     logPaymentCreation({
       amount: amountInINR,

@@ -1,17 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, Suspense, lazy, memo } from 'react';
 import { Routes, Route, Link, Outlet, useNavigate } from "react-router-dom";
 
-import WebinarPayment from './pages/WebinarPayment';
 import ErrorBoundary from './components/ErrorBoundary';
 import logger from './utils/logger';
+import StarField from './components/StarField';
+import usePrefersReducedMotion from './hooks/usePrefersReducedMotion';
+import useIntersectionObserver from './hooks/useIntersectionObserver';
 
+const WebinarPayment = lazy(() => import('./pages/WebinarPayment'));
+const JoinCourse = lazy(() => import('./pages/JoinCourse'));
+const PaymentSuccess = lazy(() => import('./pages/PaymentSuccess'));
 
-
-/* Utilities */
-const isReduced = () =>
-  typeof window !== "undefined" &&
-  window.matchMedia &&
-  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const FullScreenLoader = () => (
+  <div className="loader">
+    <span className="loader__dot" />
+    <p>Preparing the experience…</p>
+  </div>
+);
 
 function useMediaQuery(query) {
   const [matches, setMatches] = React.useState(false);
@@ -33,269 +38,20 @@ const FORM_URL =
 /* Hamburger menu */
 
 
-/* Webinar panel */
-function WebinarPanel() {
-  const navigate = useNavigate();
-  const [state, setState] = useState("entering");
-  const [isLoading, setIsLoading] = useState(false);
-
-  useEffect(() => {
-    const t = window.setTimeout(() => setState("open"), 560);
-    const onKey = (e) => {
-      if (e.key === "Escape") setState("closed");
-    };
-    window.addEventListener("keydown", onKey, { passive: true });
-    return () => {
-      clearTimeout(t);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, []);
-
-  const open = () => {
-    setState("entering");
-    window.setTimeout(() => setState("open"), 560);
-  };
-  
-  const close = () => setState("closed");
-
-  const handleReserveSlot = async () => {
-    if (isLoading) return; // Prevent double clicks
-    
-    setIsLoading(true);
-    try {
-      // Directly create checkout session and redirect to Stripe
-      // No form needed - Stripe will collect user details
-      // Use proxy if available, otherwise direct connection  
-      const API_BASE_URL = '/api'; // Vite proxy handles CORS
-      
-      logger.info('Creating checkout session', { apiUrl: API_BASE_URL });
-      
-      const response = await fetch(`${API_BASE_URL}/payment/create-checkout-session`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({})
-      });
-
-      logger.debug('Response received', { status: response.status, statusText: response.statusText });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorData;
-        try {
-          errorData = JSON.parse(errorText);
-        } catch {
-          errorData = { message: `Server error: ${response.status} ${response.statusText}` };
-        }
-        logger.error('API error', new Error(errorData.message || 'Unknown error'), { status: response.status, errorData });
-        alert('Failed to start payment: ' + (errorData.message || `Error ${response.status}. Please try again.`));
-        setIsLoading(false);
-        return;
-      }
-
-      const data = await response.json();
-      logger.info('Checkout session created', { sessionId: data.sessionId });
-      
-      if (data.success && data.checkoutUrl) {
-        // Redirect directly to Stripe Checkout
-        logger.info('Redirecting to Stripe', { checkoutUrl: data.checkoutUrl });
-        window.location.href = data.checkoutUrl;
-      } else {
-        logger.error('Invalid response', new Error('Invalid checkout session response'), { data });
-        alert('Failed to create payment session. Response: ' + JSON.stringify(data));
-        setIsLoading(false);
-      }
-    } catch (error) {
-      logger.error('Error creating checkout session', error, { apiUrl: API_BASE_URL });
-      alert('Connection error: ' + error.message + '\n\nMake sure backend is running on port 5001');
-      setIsLoading(false);
-    }
-  };
-
-  return (
-    <>
-      <button
-        aria-label="Open webinar panel"
-        className={`webinar-tab ${state !== "closed" ? "hide" : ""}`}
-        onClick={open}
-      >
-        Join the webinar
-      </button>
-
-      <aside
-        className={`webinar ${state}`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="webinar-title"
-        style={{ pointerEvents: state === "open" ? "auto" : "none" }}
-      >
-        <div className="webinar-inner">
-          <h3 id="webinar-title" className="webinar-title">
-            Join The Webinar
-          </h3>
-
-          <p className="webinar-copy">
-            Join us for an exclusive, registration-only webinar designed to bring our community together. This session will feature key product insights, addresses from our founders, and a deeper look into our mission and vision. Be part of an inspiring experience filled with valuable ideas and meaningful discussions.
-          </p>
-          
-          <p>
-            If the current slot is full, join the waitlist to get early access to the next sessions.
-          </p>
-
-          <button 
-            className="webinar-cta" 
-            onClick={handleReserveSlot}
-            disabled={isLoading}
-            style={{ 
-              opacity: isLoading ? 0.7 : 1,
-              cursor: isLoading ? 'wait' : 'pointer',
-              position: 'relative'
-            }}
-          >
-            {isLoading ? 'Redirecting to payment...' : 'Reserve your slot'}
-          </button>
-
-          <button 
-            className="webinar-close" 
-            aria-label="Close" 
-            onClick={close}
-          >
-            ✕
-          </button>
-        </div>
-      </aside>
-    </>
-  );
-}
-
-/* Particle field optimized */
-function ParticleField({ count = 180, mobileCount = 90 }) {
-  useEffect(() => {
-    if (isReduced()) return;
-
-    const root = document.querySelector(".particles");
-    if (!root) return;
-
-    const isMobile = window.matchMedia("(max-width: 768px)").matches;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
-    const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
-
-    const area = (vw * vh) / 100000;
-    const cap = Math.min(220, Math.floor(area * (isMobile ? 5 : 8)));
-    const COUNT = Math.min(cap, Math.round((isMobile ? mobileCount : count) * (dpr > 1 ? 0.8 : 1)));
-
-    if (root.dataset.seeded === "1") return;
-
-    const frag = document.createDocumentFragment();
-    for (let i = 0; i < COUNT; i++) {
-      const d = document.createElement("span");
-      d.className = "dot";
-      d.style.left = (Math.random() * 100).toFixed(2) + "vw";
-      d.style.top = (Math.random() * 100).toFixed(2) + "vh";
-      const size = (1 + Math.random() * 2).toFixed(2);
-      d.style.width = size + "px";
-      d.style.height = size + "px";
-      d.style.animationDelay = (Math.random() * 8).toFixed(2) + "s";
-      d.style.animationDuration = (7 + Math.random() * 8).toFixed(2) + "s";
-      d.style.opacity = (0.55 + Math.random() * 0.35).toFixed(2);
-      if (Math.random() < 0.4) d.dataset.alt = "1";
-      frag.appendChild(d);
-    }
-    root.appendChild(frag);
-    root.dataset.seeded = "1";
-
-    let raf = 0;
-    let t0 = performance.now();
-    const drift = () => {
-      raf = requestAnimationFrame(drift);
-      const t = performance.now() - t0;
-      if (t > 300) {
-        t0 = performance.now();
-        const dots = root.querySelectorAll(".dot");
-        for (let i = 0; i < dots.length; i += 12) {
-          const el = dots[i];
-          const o = 0.55 + Math.random() * 0.35;
-          el.style.opacity = o.toFixed(2);
-        }
-      }
-    };
-    raf = requestAnimationFrame(drift);
-
-    return () => {
-      cancelAnimationFrame(raf);
-    };
-  }, [count, mobileCount]);
-
-  return null;
-}
-
-/* Shared IO */
-const sharedIO = (() => {
-  let ioReveal, ioLine;
-  return {
-    reveal(cb) {
-      if (!ioReveal) {
-        ioReveal = new IntersectionObserver(
-          (entries, obs) => {
-            for (const e of entries) {
-              if (e.isIntersecting) {
-                cb(e.target);
-                obs.unobserve(e.target);
-              }
-            }
-          },
-          { rootMargin: "0px 0px -10% 0px", threshold: 0.1 }
-        );
-      }
-      return ioReveal;
-    },
-    line(cb) {
-      if (!ioLine) {
-        ioLine = new IntersectionObserver(
-          (entries, obs) => {
-            for (const e of entries) {
-              if (e.isIntersecting) {
-                cb(e.target);
-                obs.unobserve(e.target);
-              }
-            }
-          },
-          { rootMargin: "0px 0px -10% 0px", threshold: 0.1 }
-        );
-      }
-      return ioLine;
-    },
-  };
-})();
 
 /* Reveals */
 function useFadeInOnScroll() {
-  useEffect(() => {
-    const els = document.querySelectorAll(".reveal");
-    if (!els.length) return;
-    const io = sharedIO.reveal((el) => el.classList.add("in"));
-    const id = requestAnimationFrame(() => {
-      els.forEach((el) => io.observe(el));
-    });
-    return () => cancelAnimationFrame(id);
-  }, []);
+  useIntersectionObserver({
+    targets: ".reveal",
+    onEnter: (el) => el.classList.add("in"),
+  });
 }
 function useFadeOnce() {
-  useEffect(() => {
-    const lines = document.querySelectorAll(".reveal-line");
-    if (!lines.length) return;
-    const io = sharedIO.line((el) => el.classList.add("in"));
-    const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 1));
-    const cancel = idle(() => {
-      lines.forEach((el) => io.observe(el));
-    });
-    return () => {
-      if (typeof cancel === "number") clearTimeout(cancel);
-    };
-  }, []);
+  useIntersectionObserver({
+    targets: ".reveal-line",
+    onEnter: (el) => el.classList.add("in"),
+    rootMargin: "0px 0px -5% 0px",
+  });
 }
 
 
@@ -465,8 +221,7 @@ function SiteFooter() {
 function RootLayout() {
   return (
     <main className="page">
-      <div className="particles" aria-hidden="true" style={{ pointerEvents: "none" }} />
-      <ParticleField count={200} mobileCount={90} />
+      <StarField />
 
       <header className="nav" role="banner">
         <div className="brand">
@@ -486,10 +241,6 @@ function RootLayout() {
       </header>
 
       
-      
-     
-      <WebinarPanel />
-
       <Outlet />
 
       <SiteFooter />
@@ -499,63 +250,15 @@ function RootLayout() {
 
 /* Pages */
 function HomePage() {
-  const [isLoading, setIsLoading] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     document.documentElement.style.scrollBehavior = "smooth";
   }, []);
 
-  const handleJoin = async () => {
-    if (isLoading) return;
-    
-    setIsLoading(true);
-    try {
-      // Use Vite proxy to avoid CORS issues
-      const API_BASE_URL = '/api';
-      
-      logger.info('Creating checkout session for waitlist', { apiUrl: `${API_BASE_URL}/payment/create-checkout-session` });
-      
-      const response = await fetch(`${API_BASE_URL}/payment/create-checkout-session`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({}),
-        mode: 'cors'
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorData;
-        try {
-          errorData = JSON.parse(errorText);
-        } catch {
-          errorData = { message: `Server error: ${response.status}` };
-        }
-        logger.error('API error', new Error(errorData.message || 'Unknown error'), { status: response.status, errorData });
-        alert('Failed to start payment: ' + (errorData.message || 'Please try again.'));
-        setIsLoading(false);
-        return;
-      }
-
-      const data = await response.json();
-      logger.info('Checkout session created', { sessionId: data.sessionId });
-      
-      if (data.success && data.checkoutUrl) {
-        // Redirect directly to Stripe Checkout
-        logger.info('Redirecting to Stripe', { checkoutUrl: data.checkoutUrl });
-        window.location.href = data.checkoutUrl;
-      } else {
-        logger.error('Invalid response', new Error('Invalid checkout session response'), { data });
-        alert('Failed to create payment session. Please try again.');
-        setIsLoading(false);
-      }
-    } catch (error) {
-      logger.error('Error creating checkout session', error);
-      alert('Connection error: ' + error.message + '\n\nMake sure backend is running on port 5001');
-      setIsLoading(false);
-    }
+  const handleJoin = () => {
+    logger.info('Navigating to join-course from hero CTA');
+    navigate('/join-course');
   };
 
   return (
@@ -567,15 +270,10 @@ function HomePage() {
         <button 
           className="cta" 
           onClick={handleJoin}
-          disabled={isLoading}
-          style={{ 
-            opacity: isLoading ? 0.7 : 1,
-            cursor: isLoading ? 'wait' : 'pointer'
-          }}
         >
-          {isLoading ? 'Redirecting to payment...' : 'JOIN THE WAITLIST'}
+          JOIN THE COURSE
         </button>
-        <p className="subtext">Programs launching soon. Get early access updates.</p>
+        <p className="subtext">Enroll now and start your journey toward consistent, disciplined trading.</p>
       </section>
       
       
@@ -609,14 +307,16 @@ function ContactPage() {
 export default function App() {
   return (
     <ErrorBoundary>
-      <Routes>
-        <Route element={<RootLayout />}>
-          <Route index element={<HomePage />} />
-          
-          <Route path="/payment" element={<WebinarPayment />} />
-          
-        </Route>
-      </Routes>
+      <Suspense fallback={<FullScreenLoader />}>
+        <Routes>
+          <Route element={<RootLayout />}>
+            <Route index element={<HomePage />} />
+            <Route path="/join-course" element={<JoinCourse />} />
+            <Route path="/payment-success" element={<PaymentSuccess />} />
+            <Route path="/payment" element={<WebinarPayment />} />
+          </Route>
+        </Routes>
+      </Suspense>
     </ErrorBoundary>
   );
 }

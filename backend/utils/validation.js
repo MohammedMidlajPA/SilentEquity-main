@@ -138,12 +138,34 @@ function validatePaymentRequest(body) {
   };
 }
 
+/**
+ * Validate generic URL input
+ */
+function validateURL(url, options = {}) {
+  if (!url || typeof url !== 'string') {
+    return { valid: false, error: 'URL is required' };
+  }
+
+  const value = url.trim();
+
+  try {
+    const parsed = new URL(value);
+    if (options.requireHttps && parsed.protocol !== 'https:') {
+      return { valid: false, error: 'URL must use https://' };
+    }
+    return { valid: true, value: parsed.toString() };
+  } catch (err) {
+    return { valid: false, error: 'Invalid URL format' };
+  }
+}
+
 module.exports = {
   sanitizeString,
   validateEmail,
   validatePhone,
   validateName,
   validateStripeSessionId,
-  validatePaymentRequest
+  validatePaymentRequest,
+  validateURL
 };
 

@@ -6,8 +6,10 @@
 const User = require('../models/User');
 const Payment = require('../models/Payment');
 const { sendPaymentConfirmationEmail } = require('../utils/email');
+const { sendCoursePaymentReceipt } = require('../utils/courseEmail');
 const { logger, logPaymentSuccess, logPaymentFailure } = require('../utils/logger');
 const { stripe } = require('../config/stripe');
+const { getSupabaseClient, isSupabaseConfigured } = require('../config/supabase');
 const constants = require('../config/constants');
 
 /**
@@ -93,12 +95,188 @@ const handlePaymentIntentFailed = async (paymentIntent) => {
 };
 
 /**
+ * Retry wrapper for operations with exponential backoff
+ * @param {Function} operation - Async function to retry
+ * @param {number} maxRetries - Maximum number of retry attempts
+ * @param {number} baseDelay - Base delay in milliseconds
+ */
+async function retryOperation(operation, maxRetries = 3, baseDelay = 1000) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      const isLastAttempt = attempt === maxRetries - 1;
+      const isTransientError = error.code === 'ECONNRESET' || 
+                               error.code === 'ETIMEDOUT' || 
+                               error.message?.includes('timeout') ||
+                               error.message?.includes('network') ||
+                               error.message?.includes('PGRST');
+      
+      if (isLastAttempt || !isTransientError) {
+        throw error;
+      }
+      
+      const delay = baseDelay * Math.pow(2, attempt);
+      logger.warn('Operation failed, retrying', { 
+        attempt: attempt + 1, 
+        maxRetries,
+        delay,
+        error: error.message 
+      });
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
+
+/**
+ * Handle course enrollment payment completion
+ */
+const handleCourseEnrollmentPayment = async (checkoutSession) => {
+  const startTime = Date.now();
+  logger.info('Course enrollment payment completed', { sessionId: checkoutSession.id });
+
+  const courseLeadId = checkoutSession.metadata?.course_lead_id;
+  const customerEmail = checkoutSession.customer_details?.email || checkoutSession.customer_email;
+  const customerName = checkoutSession.customer_details?.name || checkoutSession.metadata?.lead_email || 'Customer';
+  const customerPhone = checkoutSession.customer_details?.phone || checkoutSession.metadata?.lead_phone || '';
+
+  if (!customerEmail) {
+    logger.error('No customer email in checkout session', { sessionId: checkoutSession.id });
+    return;
+  }
+
+  // Idempotency check - verify if already processed
+  if (courseLeadId && isSupabaseConfigured()) {
+    try {
+      const supabase = getSupabaseClient();
+      const { data: existingLead } = await supabase
+        .from('course_leads')
+        .select('paid')
+        .eq('id', courseLeadId)
+        .single();
+      
+      if (existingLead && existingLead.paid === true) {
+        logger.info('Course enrollment payment already processed (idempotent)', { 
+          sessionId: checkoutSession.id,
+          courseLeadId 
+        });
+        return; // Already processed, skip
+      }
+    } catch (error) {
+      logger.warn('Could not check idempotency, proceeding', { 
+        error: error.message,
+        courseLeadId 
+      });
+    }
+  }
+
+  // Update course lead in Supabase to mark as paid (with retry logic)
+  if (courseLeadId && isSupabaseConfigured()) {
+    try {
+      await retryOperation(async () => {
+        const supabase = getSupabaseClient();
+        const { error: updateError } = await supabase
+          .from('course_leads')
+          .update({ paid: true })
+          .eq('id', courseLeadId);
+
+        if (updateError) {
+          throw new Error(updateError.message);
+        }
+        
+        logger.info('Course lead marked as paid in Supabase', { courseLeadId });
+      });
+    } catch (error) {
+      logger.error('Failed to update course lead payment status after retries', { 
+        error: error.message,
+        courseLeadId 
+      });
+      // Don't throw - continue with email sending even if DB update fails
+    }
+  }
+
+  // Get receipt URL from payment intent
+  let receiptUrl = null;
+  let transactionId = checkoutSession.id;
+  
+  if (checkoutSession.payment_intent) {
+    try {
+      const paymentIntent = await stripe.paymentIntents.retrieve(checkoutSession.payment_intent, {
+        expand: ['latest_charge']
+      });
+      transactionId = paymentIntent.latest_charge || checkoutSession.payment_intent;
+      
+      if (paymentIntent.latest_charge) {
+        const charge = await stripe.charges.retrieve(paymentIntent.latest_charge);
+        receiptUrl = charge.receipt_url;
+      }
+    } catch (error) {
+      logger.warn('Could not retrieve receipt URL', { error: error.message });
+    }
+  }
+
+  // Send payment receipt email (non-blocking, with retry)
+  const emailData = {
+    userName: customerName,
+    userEmail: customerEmail,
+    amount: checkoutSession.amount_total || 0,
+    currency: checkoutSession.currency || 'usd',
+    receiptUrl: receiptUrl,
+    transactionId: transactionId,
+    sessionId: checkoutSession.id,
+    paidAt: new Date(checkoutSession.created * 1000),
+    courseName: 'Pro Trader Course - 3-Month Trading Program'
+  };
+
+  // Send email asynchronously (don't block webhook processing)
+  sendCoursePaymentReceipt(emailData).catch(async (error) => {
+    logger.error('Failed to send course payment receipt email, retrying', { 
+      error: error.message,
+      sessionId: checkoutSession.id 
+    });
+    
+    // Retry email sending once
+    try {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      await sendCoursePaymentReceipt(emailData);
+      logger.info('Course payment receipt email sent after retry', { 
+        sessionId: checkoutSession.id,
+        email: customerEmail 
+      });
+    } catch (retryError) {
+      logger.error('Failed to send course payment receipt email after retry', { 
+        error: retryError.message,
+        sessionId: checkoutSession.id 
+      });
+    }
+  });
+  
+  const processingTime = Date.now() - startTime;
+  logger.info('Course enrollment payment processed', { 
+    sessionId: checkoutSession.id,
+    email: customerEmail,
+    processingTimeMs: processingTime
+  });
+};
+
+/**
  * Handle checkout session completed event
  */
 const handleCheckoutSessionCompleted = async (checkoutSession) => {
+  const startTime = Date.now();
   logger.info('Checkout session completed', { sessionId: checkoutSession.id });
 
   if (checkoutSession.payment_status === 'paid') {
+    // Check if this is a course enrollment payment
+    const courseLeadId = checkoutSession.metadata?.course_lead_id;
+    
+    if (courseLeadId) {
+      // Handle course enrollment payment
+      await handleCourseEnrollmentPayment(checkoutSession);
+      return;
+    }
+    
+    // Otherwise handle as webinar payment (existing logic)
     const customerEmail = checkoutSession.customer_details?.email || checkoutSession.customer_email;
     const customerName = checkoutSession.customer_details?.name || 'Customer';
     const customerPhone = checkoutSession.customer_details?.phone || '';
@@ -194,8 +372,18 @@ const handleCheckoutSessionCompleted = async (checkoutSession) => {
       paidAt: payment.paidAt
     };
 
-    sendPaymentConfirmationEmail(emailData).catch(err => {
-      logger.error('Failed to send confirmation email', { error: err.message });
+    // Send email asynchronously (non-blocking)
+    sendPaymentConfirmationEmail(emailData).catch(async (err) => {
+      logger.error('Failed to send confirmation email, retrying', { error: err.message });
+      
+      // Retry email sending once
+      try {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        await sendPaymentConfirmationEmail(emailData);
+        logger.info('Confirmation email sent after retry', { email: payment.userEmail });
+      } catch (retryError) {
+        logger.error('Failed to send confirmation email after retry', { error: retryError.message });
+      }
     });
 
     logPaymentSuccess({
@@ -207,7 +395,11 @@ const handleCheckoutSessionCompleted = async (checkoutSession) => {
       stripePaymentIntentId: checkoutSession.id
     });
 
-    logger.info('Payment processed via checkout webhook', { sessionId: checkoutSession.id });
+    const processingTime = Date.now() - startTime;
+    logger.info('Payment processed via checkout webhook', { 
+      sessionId: checkoutSession.id,
+      processingTimeMs: processingTime
+    });
   }
 };
 

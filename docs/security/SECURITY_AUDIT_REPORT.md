@@ -14,6 +14,7 @@
 - **Security Best Practices**: ✅ Implemented
 - **Overall Security Score**: 95/100
 
+security - https://security score is to be managed 
 ---
 
 ## 🔍 Vulnerability Scan Results
@@ -178,7 +179,7 @@
 - [x] HTTPS enabled (production)
 - [x] CORS properly configured
 - [x] Security headers enabled
-- [x] Database connection secure
+- [x] Database connection secure   
 
 ### Production Security Checklist
 
