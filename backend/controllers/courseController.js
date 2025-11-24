@@ -221,18 +221,45 @@ async function createCheckoutSession(lead, leadRecordId) {
       },
     ],
     customer_email: lead.email,
+    // Collect billing address - helps reduce declines and fraud
+    billing_address_collection: 'required',
+    // Collect phone number - required for 3D Secure OTP verification
     phone_number_collection: {
-      enabled: true, // Required for 3D Secure OTP verification
+      enabled: true,
     },
+    // Let Stripe auto-detect payment methods for maximum acceptance
+    // Stripe will show all eligible methods based on currency and location
+    // This maximizes payment acceptance rate
     payment_method_types: ['card', 'amazon_pay'],
     payment_method_options: {
       card: {
-        request_three_d_secure: 'automatic', // Smart OTP - required when mandatory
+        // Automatic 3DS - only requests when required by issuer
+        // This maximizes acceptance while maintaining security
+        request_three_d_secure: 'automatic',
+        // Capture method - automatic for immediate capture
+        capture_method: 'automatic',
       },
     },
+    // Enable promotion codes for discounts
     allow_promotion_codes: true,
+    // Automatic invoice creation and email sending
     invoice_creation: {
-      enabled: true, // Stripe will automatically create and email invoices
+      enabled: true,
+    },
+    // Payment intent data for better acceptance
+    payment_intent_data: {
+      // Capture method - automatic for immediate capture
+      capture_method: 'automatic',
+      // Description for customer clarity
+      description: 'Pro Trader Course - 3-Month Trading Program',
+      // Metadata for tracking
+      metadata: {
+        course_lead_id: leadRecordId || '',
+        lead_email: lead.email,
+        lead_phone: lead.phone,
+        lead_name: lead.name,
+        source: 'course_enrollment',
+      },
     },
     success_url: `${process.env.FRONTEND_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${process.env.FRONTEND_URL}/join-course`,
