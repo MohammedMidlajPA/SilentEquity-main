@@ -1,5 +1,11 @@
 const { stripe } = require('../config/stripe');
 const { getSupabaseClient, isSupabaseConfigured, retryOperation } = require('../config/supabase');
+const { 
+  isGoogleSheetsConfigured, 
+  saveLeadToSheets, 
+  findExistingLeadInSheets,
+  initializeGoogleSheets 
+} = require('../config/googleSheets');
 const { logger } = require('../utils/logger');
 const { validateName, validateEmail, validatePhone } = require('../utils/validation');
 
@@ -263,18 +269,19 @@ async function createCheckoutSession(lead, leadRecordId) {
     },
     success_url: `${process.env.FRONTEND_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${process.env.FRONTEND_URL}/join-course`,
-    metadata: {
-      course_lead_id: leadRecordId || '',
-      lead_email: lead.email,
-      lead_phone: lead.phone,
-      lead_name: lead.name,
-      storage_backend: leadRecordId ? 'supabase' : 'none',
-      form_data: JSON.stringify({
-        name: lead.name,
-        email: lead.email,
-        phone: lead.phone
-      })
-    },
+      metadata: {
+        course_lead_id: leadRecordId || '',
+        google_sheets_row_id: googleSheetsRowId || '',
+        lead_email: lead.email,
+        lead_phone: lead.phone,
+        lead_name: lead.name,
+        storage_backend: storageBackends.join(',') || 'none',
+        form_data: JSON.stringify({
+          name: lead.name,
+          email: lead.email,
+          phone: lead.phone
+        })
+      },
   };
 
   if (process.env.STRIPE_PAYMENT_METHOD_CONFIGURATION_ID) {
@@ -328,23 +335,73 @@ exports.joinCourse = async (req, res) => {
       });
     }
 
-    if (!isSupabaseConfigured()) {
-      logger.error('Supabase not configured for course enrollment storage');
+    // Determine which storage backend to use
+    const useSupabase = isSupabaseConfigured();
+    const useGoogleSheets = isGoogleSheetsConfigured();
+    const storageBackend = process.env.FORM_STORAGE_BACKEND || 'auto'; // 'supabase', 'google_sheets', 'both', or 'auto'
+
+    if (!useSupabase && !useGoogleSheets) {
+      logger.error('No storage backend configured for course enrollment');
       return res.status(500).json({
         success: false,
         message: 'Enrollment storage is not configured yet. Please contact support.',
       });
     }
 
-    const supabase = getSupabaseClient();
-    
-    // Check for existing lead or create new one
-    // If Supabase fails, we'll continue without leadRecordId and create checkout anyway
-    let leadRecordId = await findExistingLead(supabase, lead.email);
-    
-    if (!leadRecordId) {
-      leadRecordId = await insertLead(supabase, lead);
+    // Initialize Google Sheets headers if using Google Sheets
+    if (useGoogleSheets && (storageBackend === 'google_sheets' || storageBackend === 'both' || storageBackend === 'auto')) {
+      await initializeGoogleSheets().catch(err => {
+        logger.warn('Failed to initialize Google Sheets headers', { error: err.message });
+      });
     }
+
+    let leadRecordId = null;
+    let googleSheetsRowId = null;
+    const storageBackends = [];
+
+    // Save to Supabase if configured and selected
+    if (useSupabase && (storageBackend === 'supabase' || storageBackend === 'both' || storageBackend === 'auto')) {
+      try {
+        const supabase = getSupabaseClient();
+        leadRecordId = await findExistingLead(supabase, lead.email);
+        
+        if (!leadRecordId) {
+          leadRecordId = await insertLead(supabase, lead);
+        }
+        
+        if (leadRecordId) {
+          storageBackends.push('supabase');
+        }
+      } catch (error) {
+        logger.warn('Supabase save failed, continuing with other backends', { error: error.message });
+      }
+    }
+
+    // Save to Google Sheets if configured and selected
+    if (useGoogleSheets && (storageBackend === 'google_sheets' || storageBackend === 'both' || (storageBackend === 'auto' && !leadRecordId))) {
+      try {
+        // Check if email already exists in Google Sheets
+        googleSheetsRowId = await findExistingLeadInSheets(lead.email);
+        
+        if (!googleSheetsRowId) {
+          googleSheetsRowId = await saveLeadToSheets(lead);
+        }
+        
+        if (googleSheetsRowId) {
+          storageBackends.push('google_sheets');
+        }
+      } catch (error) {
+        logger.warn('Google Sheets save failed, continuing', { error: error.message });
+      }
+    }
+
+    // Log storage status
+    logger.info('Lead storage completed', {
+      email: lead.email,
+      supabaseId: leadRecordId,
+      googleSheetsRowId,
+      storageBackends: storageBackends.join(', ') || 'none',
+    });
     
     // Create Stripe checkout session
     // leadRecordId may be null, but we'll store all data in Stripe metadata as backup

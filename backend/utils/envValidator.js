@@ -37,6 +37,22 @@ function validateEnvironment() {
     warnings.push('MONGODB_URI missing: MongoDB features disabled (using Supabase)');
   }
 
+  // Google Sheets is optional (alternative to Supabase)
+  if (!process.env.GOOGLE_SHEETS_SPREADSHEET_ID) {
+    warnings.push('GOOGLE_SHEETS_SPREADSHEET_ID missing: Google Sheets storage disabled');
+  } else if (!process.env.GOOGLE_SHEETS_CREDENTIALS && 
+             (!process.env.GOOGLE_SHEETS_CLIENT_EMAIL || !process.env.GOOGLE_SHEETS_PRIVATE_KEY)) {
+    warnings.push('Google Sheets credentials missing: Configure GOOGLE_SHEETS_CREDENTIALS or GOOGLE_SHEETS_CLIENT_EMAIL/PRIVATE_KEY');
+  }
+
+  // Form storage backend selection
+  if (process.env.FORM_STORAGE_BACKEND) {
+    const validBackends = ['supabase', 'google_sheets', 'both', 'auto'];
+    if (!validBackends.includes(process.env.FORM_STORAGE_BACKEND)) {
+      warnings.push(`FORM_STORAGE_BACKEND should be one of: ${validBackends.join(', ')}`);
+    }
+  }
+
   // Check Stripe key format
   if (process.env.STRIPE_SECRET_KEY) {
     if (!process.env.STRIPE_SECRET_KEY.startsWith('sk_test_') && 
