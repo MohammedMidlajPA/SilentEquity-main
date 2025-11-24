@@ -24,9 +24,10 @@ if (process.env.NODE_ENV !== 'test') {
     process.exit(1);
   }
 
-  // Connect to MongoDB
-  connectDB().catch(() => {
-    // Error already logged in connectDB
+  // Connect to MongoDB (optional - only needed for webinar payments)
+  // Course enrollment uses Supabase, so MongoDB failure won't block server startup
+  connectDB(false).catch(() => {
+    // Error already logged in connectDB, MongoDB is optional
   });
 
   // Test Stripe connection (non-blocking)

@@ -6,7 +6,6 @@ const { logger, logPaymentCreation, logPaymentSuccess, logPaymentFailure, logWeb
 const { convertUSDToINR } = require('../utils/currency');
 const { validatePaymentRequest, validateStripeSessionId } = require('../utils/validation');
 const constants = require('../config/constants');
-const mongoose = require('mongoose');
 
 /**
  * Create Stripe Checkout Session
