@@ -207,9 +207,11 @@ async function insertLead(supabase, lead) {
  * Creates Stripe checkout session for course enrollment
  * @param {Object} lead - Lead data
  * @param {string|null} leadRecordId - Supabase lead ID (optional)
+ * @param {string|null} googleSheetsRowId - Google Sheets row ID (optional)
+ * @param {Array<string>} storageBackends - Array of storage backends used (optional)
  * @returns {Promise<Object>} Stripe checkout session
  */
-async function createCheckoutSession(lead, leadRecordId) {
+async function createCheckoutSession(lead, leadRecordId, googleSheetsRowId = null, storageBackends = []) {
   if (!process.env.STRIPE_PRICE_ID) {
     throw new Error('STRIPE_PRICE_ID missing');
   }
@@ -242,8 +244,6 @@ async function createCheckoutSession(lead, leadRecordId) {
         // Automatic 3DS - only requests when required by issuer
         // This maximizes acceptance while maintaining security
         request_three_d_secure: 'automatic',
-        // Capture method - automatic for immediate capture
-        capture_method: 'automatic',
       },
     },
     // Enable promotion codes for discounts
@@ -269,19 +269,19 @@ async function createCheckoutSession(lead, leadRecordId) {
     },
     success_url: `${process.env.FRONTEND_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${process.env.FRONTEND_URL}/join-course`,
-      metadata: {
-        course_lead_id: leadRecordId || '',
-        google_sheets_row_id: googleSheetsRowId || '',
-        lead_email: lead.email,
-        lead_phone: lead.phone,
-        lead_name: lead.name,
-        storage_backend: storageBackends.join(',') || 'none',
-        form_data: JSON.stringify({
-          name: lead.name,
-          email: lead.email,
-          phone: lead.phone
-        })
-      },
+    metadata: {
+      course_lead_id: leadRecordId || '',
+      google_sheets_row_id: googleSheetsRowId || '',
+      lead_email: lead.email,
+      lead_phone: lead.phone,
+      lead_name: lead.name,
+      storage_backend: storageBackends.join(',') || 'none',
+      form_data: JSON.stringify({
+        name: lead.name,
+        email: lead.email,
+        phone: lead.phone
+      })
+    },
   };
 
   if (process.env.STRIPE_PAYMENT_METHOD_CONFIGURATION_ID) {
@@ -359,57 +359,91 @@ exports.joinCourse = async (req, res) => {
     let googleSheetsRowId = null;
     const storageBackends = [];
 
+    // OPTIMIZED: Save data in parallel for faster response
+    // Run both saves simultaneously, wait max 1.5 seconds, then proceed to payment
+    const savePromises = [];
+
     // Save to Supabase if configured and selected
     if (useSupabase && (storageBackend === 'supabase' || storageBackend === 'both' || storageBackend === 'auto')) {
-      try {
-        const supabase = getSupabaseClient();
-        leadRecordId = await findExistingLead(supabase, lead.email);
-        
-        if (!leadRecordId) {
-          leadRecordId = await insertLead(supabase, lead);
+      const supabasePromise = (async () => {
+        try {
+          const supabase = getSupabaseClient();
+          const existingId = await findExistingLead(supabase, lead.email);
+          
+          if (!existingId) {
+            const newId = await insertLead(supabase, lead);
+            return { type: 'supabase', id: newId };
+          }
+          return { type: 'supabase', id: existingId };
+        } catch (error) {
+          logger.warn('Supabase save failed, continuing', { error: error.message });
+          return { type: 'supabase', id: null };
         }
-        
-        if (leadRecordId) {
-          storageBackends.push('supabase');
-        }
-      } catch (error) {
-        logger.warn('Supabase save failed, continuing with other backends', { error: error.message });
-      }
+      })();
+      savePromises.push(supabasePromise);
     }
 
-    // Save to Google Sheets if configured and selected
-    if (useGoogleSheets && (storageBackend === 'google_sheets' || storageBackend === 'both' || (storageBackend === 'auto' && !leadRecordId))) {
-      try {
-        // Check if email already exists in Google Sheets
-        googleSheetsRowId = await findExistingLeadInSheets(lead.email);
-        
-        if (!googleSheetsRowId) {
-          googleSheetsRowId = await saveLeadToSheets(lead);
+    // Save to Google Sheets if configured and selected (ALWAYS save when configured, not just as backup)
+    // Skip duplicate check to avoid lag - just save directly for faster response
+    if (useGoogleSheets && (storageBackend === 'google_sheets' || storageBackend === 'both' || storageBackend === 'auto')) {
+      const sheetsPromise = (async () => {
+        try {
+          // Direct save without duplicate check for faster response
+          const rowId = await saveLeadToSheets(lead);
+          return { type: 'sheets', id: rowId };
+        } catch (error) {
+          logger.warn('Google Sheets save failed, continuing', { error: error.message });
+          return { type: 'sheets', id: null };
         }
-        
-        if (googleSheetsRowId) {
-          storageBackends.push('google_sheets');
+      })();
+      savePromises.push(sheetsPromise);
+    }
+
+    // Wait for saves with timeout - don't block payment flow too long
+    // Give saves 1.5 seconds max, then proceed to payment (data will continue saving in background)
+    if (savePromises.length > 0) {
+      try {
+        const results = await Promise.race([
+          Promise.allSettled(savePromises),
+          new Promise(resolve => setTimeout(() => resolve([]), 1500))
+        ]);
+
+        // Process results
+        if (Array.isArray(results) && results.length > 0) {
+          results.forEach(result => {
+            if (result && result.status === 'fulfilled' && result.value) {
+              const { type, id } = result.value;
+              if (type === 'supabase' && id) {
+                leadRecordId = id;
+                storageBackends.push('supabase');
+              } else if (type === 'sheets' && id) {
+                googleSheetsRowId = id;
+                storageBackends.push('google_sheets');
+              }
+            }
+          });
         }
       } catch (error) {
-        logger.warn('Google Sheets save failed, continuing', { error: error.message });
+        // Ignore errors - data will continue saving in background, payment proceeds
+        logger.debug('Data save timeout, proceeding to payment', { error: error.message });
       }
     }
 
     // Log storage status
-    logger.info('Lead storage completed', {
+    logger.info('Lead storage initiated', {
       email: lead.email,
-      supabaseId: leadRecordId,
-      googleSheetsRowId,
-      storageBackends: storageBackends.join(', ') || 'none',
+      supabaseId: leadRecordId || 'pending',
+      googleSheetsRowId: googleSheetsRowId || 'pending',
+      storageBackends: storageBackends.join(', ') || 'pending',
     });
     
-    // Create Stripe checkout session
-    // leadRecordId may be null, but we'll store all data in Stripe metadata as backup
+    // Create Stripe checkout session IMMEDIATELY
+    // Payment flow is priority - data saves continue in background
     const startTime = Date.now();
     
     let session;
     try {
-      session = await createCheckoutSession(lead, leadRecordId);
+      session = await createCheckoutSession(lead, leadRecordId, googleSheetsRowId, storageBackends);
     } catch (error) {
       if (error.message === 'STRIPE_PRICE_ID missing' || error.message === 'FRONTEND_URL missing') {
         logger.error('Configuration error', { error: error.message });
@@ -424,13 +458,26 @@ exports.joinCourse = async (req, res) => {
       logger.error('Stripe checkout session creation failed', {
         error: error.message,
         errorType: error.type,
+        errorCode: error.code,
+        errorStatus: error.statusCode,
         leadId: leadRecordId,
-        email: lead.email
+        email: lead.email,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
       });
+      
+      // Provide more specific error message in development
+      const errorMessage = process.env.NODE_ENV === 'development' 
+        ? `Payment system error: ${error.message} (${error.type || 'Unknown'})`
+        : 'Payment system temporarily unavailable. Please try again in a moment.';
       
       return res.status(502).json({
         success: false,
-        message: 'Payment system temporarily unavailable. Please try again in a moment.',
+        message: errorMessage,
+        ...(process.env.NODE_ENV === 'development' && { 
+          error: error.message,
+          errorType: error.type,
+          errorCode: error.code 
+        }),
       });
     }
     

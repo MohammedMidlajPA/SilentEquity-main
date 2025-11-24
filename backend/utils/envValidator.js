@@ -38,11 +38,29 @@ function validateEnvironment() {
   }
 
   // Google Sheets is optional (alternative to Supabase)
-  if (!process.env.GOOGLE_SHEETS_SPREADSHEET_ID) {
-    warnings.push('GOOGLE_SHEETS_SPREADSHEET_ID missing: Google Sheets storage disabled');
-  } else if (!process.env.GOOGLE_SHEETS_CREDENTIALS && 
-             (!process.env.GOOGLE_SHEETS_CLIENT_EMAIL || !process.env.GOOGLE_SHEETS_PRIVATE_KEY)) {
-    warnings.push('Google Sheets credentials missing: Configure GOOGLE_SHEETS_CREDENTIALS or GOOGLE_SHEETS_CLIENT_EMAIL/PRIVATE_KEY');
+  // Check for webhook URL (preferred method) OR API credentials
+  const hasWebhookUrl = Boolean(process.env.GOOGLE_SHEETS_WEBHOOK_URL);
+  const hasApiConfig = Boolean(process.env.GOOGLE_SHEETS_SPREADSHEET_ID);
+  const hasApiCredentials = Boolean(
+    process.env.GOOGLE_SHEETS_CREDENTIALS || 
+    (process.env.GOOGLE_SHEETS_CLIENT_EMAIL && process.env.GOOGLE_SHEETS_PRIVATE_KEY)
+  );
+
+  if (!hasWebhookUrl && !hasApiConfig) {
+    warnings.push('Google Sheets not configured: Set GOOGLE_SHEETS_WEBHOOK_URL (recommended) or GOOGLE_SHEETS_SPREADSHEET_ID with credentials');
+  } else if (hasWebhookUrl && hasApiConfig) {
+    warnings.push('Both Google Sheets webhook and API configured: Webhook method will be used first');
+  } else if (hasApiConfig && !hasApiCredentials) {
+    warnings.push('Google Sheets API configured but credentials missing: Configure GOOGLE_SHEETS_CREDENTIALS or GOOGLE_SHEETS_CLIENT_EMAIL/PRIVATE_KEY');
+  }
+
+  // Validate webhook URL format if provided
+  if (hasWebhookUrl) {
+    try {
+      new URL(process.env.GOOGLE_SHEETS_WEBHOOK_URL);
+    } catch (e) {
+      warnings.push('GOOGLE_SHEETS_WEBHOOK_URL appears to be invalid');
+    }
   }
 
   // Form storage backend selection

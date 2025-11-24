@@ -97,7 +97,36 @@ const JoinCourse = () => {
           <div className="glass-card__header">
             <p className="eyebrow">JOIN THE COURSE</p>
             <h1 id="join-course-title">Code of Consistency</h1>
-            <p className="glass-card__subtitle">
+            <div className="glass-card__description" style={{ marginTop: '1.25rem', marginBottom: '1.75rem' }}>
+              <p style={{ marginBottom: '1rem', lineHeight: '1.6', fontSize: '0.95rem', color: 'var(--muted)' }}>
+                A focused trading program designed to build discipline, structure, and repeatable results.
+              </p>
+              <p style={{ marginBottom: '1.5rem', lineHeight: '1.6', fontSize: '0.95rem', color: 'var(--muted)' }}>
+                This course teaches you how to follow a daily trading system, avoid emotional decisions, and trade with clarity.
+              </p>
+              
+              <div style={{ marginBottom: '1.5rem' }}>
+                <h3 style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '0.75rem', color: '#9fece2', letterSpacing: '0.05em', textTransform: 'uppercase' }}>What You Get</h3>
+                <ul style={{ listStyle: 'none', padding: 0, margin: 0, lineHeight: '1.8', fontSize: '0.9rem', color: 'var(--muted)' }}>
+                  <li style={{ marginBottom: '0.5rem', paddingLeft: '0.5rem' }}>• A simple, consistent trading routine</li>
+                  <li style={{ marginBottom: '0.5rem', paddingLeft: '0.5rem' }}>• Market structure & SMC basics</li>
+                  <li style={{ marginBottom: '0.5rem', paddingLeft: '0.5rem' }}>• Clear risk management rules</li>
+                  <li style={{ marginBottom: '0.5rem', paddingLeft: '0.5rem' }}>• High-probability trade setups</li>
+                  <li style={{ marginBottom: '0.5rem', paddingLeft: '0.5rem' }}>• Psychology and discipline training</li>
+                </ul>
+              </div>
+              
+              <div style={{ marginBottom: '1rem' }}>
+                <h3 style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '0.75rem', color: '#9fece2', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Built For</h3>
+                <p style={{ lineHeight: '1.6', marginBottom: '0.5rem', fontSize: '0.9rem', color: 'var(--muted)' }}>
+                  Beginners, struggling traders, and funded traders who want stable, controlled, and consistent performance.
+                </p>
+                <p style={{ lineHeight: '1.6', fontStyle: 'italic', color: '#9fece2', fontSize: '0.9rem', marginTop: '0.75rem' }}>
+                  Trade less. Trade better. Stay consistent.
+                </p>
+              </div>
+            </div>
+            <p className="glass-card__subtitle" style={{ marginTop: '1.5rem', fontSize: '0.9rem' }}>
               Complete the intake form to save your cohort seat, then finish payment on Stripe using your existing live checkout.
             </p>
           </div>
