@@ -47,20 +47,33 @@ const JoinCourse = () => {
     setStatus({ submitting: true, error: '' });
     
     try {
-      const { checkoutUrl } = await submitCourseForm(values);
-      if (checkoutUrl) {
-        // Small delay to ensure state updates before redirect
-        await new Promise(resolve => setTimeout(resolve, 100));
-        window.location.href = checkoutUrl;
+      const result = await submitCourseForm(values);
+      if (result?.checkoutUrl) {
+        // Immediate redirect for faster user experience
+        window.location.href = result.checkoutUrl;
       } else {
-        throw new Error('No checkout URL received from server');
+        throw new Error('No checkout URL received from server. Please try again.');
       }
     } catch (error) {
       setIsSubmitting(false);
+      // Show more specific error messages
+      let errorMessage = error.message || 'Unable to start payment. Please check your connection and try again.';
+      
+      // Provide user-friendly error messages
+      if (errorMessage.includes('CORS')) {
+        errorMessage = 'Connection error. Please ensure you are accessing from the correct domain.';
+      } else if (errorMessage.includes('timeout')) {
+        errorMessage = 'Request timed out. Please check your connection and try again.';
+      } else if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
+        errorMessage = 'Unable to connect to the server. Please check your internet connection.';
+      }
+      
       setStatus({
         submitting: false,
-        error: error.message || 'Unable to start payment. Please check your connection and try again.',
+        error: errorMessage,
       });
+      // Log error for debugging
+      console.error('Form submission error:', error);
     }
   };
 

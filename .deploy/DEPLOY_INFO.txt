@@ -1,0 +1,8 @@
+Deployment Information
+=====================
+Project: Silent Equity
+Timestamp: 20251124_212639
+Backend: Node.js/Express
+Frontend: React/Vite
+Build Date: Mon Nov 24 21:26:39 IST 2025
+Git Commit: 25b2c408d233a54e749009ef3701fb479d3ea977

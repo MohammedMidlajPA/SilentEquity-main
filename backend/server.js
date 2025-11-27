@@ -41,6 +41,9 @@ if (process.env.NODE_ENV !== 'test') {
   });
 }
 
+// Trust proxy - Required when behind Nginx reverse proxy
+app.set('trust proxy', true);
+
 // Security middleware
 app.use(helmet({
   contentSecurityPolicy: false, // Disable CSP for API
@@ -54,6 +57,8 @@ const generalLimiter = rateLimit({
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
+  // Trust proxy is set, so skip X-Forwarded-For validation
+  validate: { trustProxy: false },
 });
 
 // Stricter rate limiting for payment endpoints
@@ -65,6 +70,8 @@ const paymentLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: false,
   skipFailedRequests: false,
+  // Trust proxy is set, so skip X-Forwarded-For validation
+  validate: { trustProxy: false },
 });
 
 app.use('/api/', generalLimiter);
@@ -77,27 +84,73 @@ const allowedOrigins = [
   process.env.FRONTEND_URL,
   'http://localhost:5173',
   'http://localhost:5174',
+  'http://localhost:5175',
   'http://localhost:3000',
   'http://127.0.0.1:5173',
   'http://127.0.0.1:5174',
+  'http://127.0.0.1:5175',
   'http://127.0.0.1:3000'
 ].filter(Boolean);
+
+// Normalize origin for comparison (remove trailing slash, convert to lowercase)
+function normalizeOrigin(origin) {
+  if (!origin) return null;
+  return origin.toLowerCase().replace(/\/$/, '');
+}
 
 // CORS configuration - Always check whitelist
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, Postman, etc.)
+    // Allow requests with no origin (mobile apps, Postman, curl, etc.)
     if (!origin) {
       return callback(null, true);
     }
     
-    // Check if origin is in allowed list
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      logger.warn('CORS blocked origin', { origin, allowedOrigins });
-      callback(new Error('Not allowed by CORS'));
+    const normalizedOrigin = normalizeOrigin(origin);
+    const normalizedAllowed = allowedOrigins.map(normalizeOrigin);
+    
+    // Check if origin is in allowed list (exact match)
+    if (normalizedAllowed.includes(normalizedOrigin)) {
+      return callback(null, true);
     }
+    
+    // In production, allow all variations of thesilentequity.com
+    if (process.env.NODE_ENV === 'production') {
+      const productionDomains = [
+        'thesilentequity.com',
+        'www.thesilentequity.com',
+        'https://thesilentequity.com',
+        'https://www.thesilentequity.com'
+      ];
+      
+      const isProductionDomain = productionDomains.some(domain => 
+        normalizedOrigin.includes(domain.toLowerCase())
+      );
+      
+      if (isProductionDomain) {
+        logger.info('CORS allowed production domain', { origin, normalizedOrigin });
+        return callback(null, true);
+      }
+    }
+    
+    // Allow localhost and local IP addresses in development
+    if (process.env.NODE_ENV !== 'production') {
+      if (normalizedOrigin.includes('localhost') || 
+          normalizedOrigin.includes('127.0.0.1') ||
+          normalizedOrigin.match(/^https?:\/\/10\.\d+\.\d+\.\d+:\d+$/) ||
+          normalizedOrigin.match(/^https?:\/\/192\.168\.\d+\.\d+:\d+$/)) {
+        logger.info('CORS allowed local network in development', { origin, normalizedOrigin });
+        return callback(null, true);
+      }
+    }
+    
+    logger.warn('CORS blocked origin', { 
+      origin, 
+      normalizedOrigin,
+      allowedOrigins,
+      environment: process.env.NODE_ENV 
+    });
+    callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -194,16 +247,46 @@ app.get('/api/health', (req, res) => {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
+  // Handle CORS errors specifically
+  if (err.message === 'Not allowed by CORS') {
+    logger.warn('CORS error', {
+      origin: req.headers.origin,
+      path: req.path,
+      method: req.method,
+    });
+    return res.status(403).json({
+      success: false,
+      message: 'Request blocked by CORS policy. Please ensure you are accessing from the correct domain.',
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+  
+  // Handle other errors
   logger.error('Server error', {
     error: err.message,
     stack: err.stack,
     path: req.path,
     method: req.method,
+    origin: req.headers.origin,
   });
   
-  res.status(500).json({
+  // Provide more specific error messages
+  let errorMessage = 'Unable to process your request. Please try again.';
+  let statusCode = 500;
+  
+  if (err.message.includes('timeout')) {
+    errorMessage = 'Request timed out. Please try again.';
+    statusCode = 504;
+  } else if (err.message.includes('validation') || err.message.includes('Invalid')) {
+    errorMessage = err.message;
+    statusCode = 400;
+  } else if (process.env.NODE_ENV === 'development') {
+    errorMessage = err.message || errorMessage;
+  }
+  
+  res.status(statusCode).json({
     success: false,
-    message: 'Something went wrong!',
+    message: errorMessage,
     error: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
 });

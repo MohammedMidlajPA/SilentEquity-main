@@ -29,7 +29,7 @@ async function handleResponse(response) {
 export async function submitCourseForm(data) {
   let response;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+  const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout for payment processing
   
   try {
     response = await fetch(`${DEFAULT_API_BASE_URL}/course/join`, {
@@ -47,7 +47,11 @@ export async function submitCourseForm(data) {
     if (error.name === 'AbortError') {
       throw new Error('Request timed out. Please check your connection and try again.');
     }
-    throw new Error('Unable to reach the enrollment API. Ensure the backend is running.');
+    // Network errors - provide helpful message
+    if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+      throw new Error('Unable to connect to the server. Please check your internet connection and ensure the backend is running.');
+    }
+    throw new Error(error.message || 'Unable to reach the enrollment API. Please check your connection and try again.');
   }
 
   const payload = await handleResponse(response);

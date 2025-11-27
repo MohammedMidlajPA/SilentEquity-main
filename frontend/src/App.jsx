@@ -66,7 +66,7 @@ function SiteFooter() {
     display: "flex",
     alignItems: "center",
     justifyContent: isMobile ? "center" : "space-between",
-    gap: isMobile ? 12 : 16,
+    gap: isMobile ? 16 : 24,
     padding: isMobile ? "12px 14px" : "14px 16px",
     maxWidth: 1100,
     margin: "0 auto",
@@ -78,7 +78,8 @@ function SiteFooter() {
       <div className="footer-inner" role="contentinfo" aria-label="Site footer" style={rowStyle}>
         {isMobile ? (
           <>
-            <div style={{ width: "100%", display: "flex", justifyContent: "center" }}>
+            {/* Mobile: Logo centered with social icons below */}
+            <div style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
               <div className="footer-brand">
                 <img
                   src="https://iili.io/Kh7cDHG.png"
@@ -91,9 +92,8 @@ function SiteFooter() {
                   fetchpriority="low"
                 />
               </div>
-            </div>
-
-            <nav className="footer-social" aria-label="Social links" style={{ display: "flex", gap: 10 }}>
+              {/* Social icons: X - Instagram - YouTube */}
+              <nav className="footer-social" aria-label="Social links" style={{ display: "flex", gap: 12, justifyContent: "center" }}>
               <a
                 href="https://x.com/silent_equity?s=21"
                 target="_blank"
@@ -139,15 +139,17 @@ function SiteFooter() {
                 </svg>
               </a>
             </nav>
+            </div>
           </>
         ) : (
           <>
+            {/* Desktop: Three-column layout - Address | Logo | Social Icons */}
             <address className="footer-address" aria-label="Address" style={{ minWidth: 220, textAlign: "left" }}>
               <div>11 Regent Street</div>
               <div>Leeds, United Kingdom</div>
             </address>
 
-            <div className="footer-brand" style={{ flex: 1, display: "flex", justifyContent: "center" }}>
+            <div className="footer-brand" style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
             <img
               src="https://iili.io/Kh7cDHG.png"
               alt="Silent Equity"
@@ -160,7 +162,7 @@ function SiteFooter() {
             />
             </div>
 
-            <nav className="footer-social" aria-label="Social links" style={{ display: "flex", gap: 10 }}>
+            <nav className="footer-social" aria-label="Social links" style={{ display: "flex", gap: 12, justifyContent: "flex-end", minWidth: 220 }}>
               <a
                 href="https://x.com/silent_equity?s=21"
                 target="_blank"
@@ -225,7 +227,7 @@ function RootLayout() {
 
       <header className="nav" role="banner">
         <div className="brand">
-          <Link to="/" aria-label="Go to home" style={{ display: "inline-block" }}>
+          <Link to="/" aria-label="Go to home" style={{ display: "flex", justifyContent: "center", alignItems: "center", width: "100%" }}>
             <img
               src="https://iili.io/Kh7cDHG.png"
               alt="Silent Equity logo"

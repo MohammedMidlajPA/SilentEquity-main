@@ -1,0 +1,509 @@
+const { stripe } = require('../config/stripe');
+const { getSupabaseClient, isSupabaseConfigured, retryOperation } = require('../config/supabase');
+const { 
+  isGoogleSheetsConfigured, 
+  saveLeadToSheets, 
+  findExistingLeadInSheets,
+  initializeGoogleSheets 
+} = require('../config/googleSheets');
+const { logger } = require('../utils/logger');
+const { validateName, validateEmail, validatePhone } = require('../utils/validation');
+
+/**
+ * Test email patterns to block
+ * @type {RegExp[]}
+ */
+const TEST_EMAIL_PATTERNS = [
+  /test\d+@example\.com/i,
+  /test\d+@test\.com/i,
+  /loadtest\d+.*@test\.com/i,
+  /dbtest\d+@verification\.com/i,
+  /realuser\d+@test\.com/i,
+  /final\d+@test\.com/i,
+  /.*test.*@.*test\.com/i,
+  /.*test.*@example\.com/i,
+  /test.*@.*\.com/i,
+  /.*@test\.com/i,
+  /.*@example\.com/i
+];
+
+/**
+ * Test name patterns to block (exact matches only)
+ * @type {string[]}
+ */
+const TEST_NAME_PATTERNS = [
+  'test user',
+  'load test',
+  'database test',
+  'test payment',
+  'test customer',
+  'fake user',
+  'dummy user',
+  'sample user'
+];
+
+/**
+ * Validates if the submitted data is test data
+ * @param {string} email - User email
+ * @param {string} name - User name
+ * @returns {boolean} True if test data should be blocked
+ */
+function isTestData(email, name) {
+  const emailLower = email.toLowerCase();
+  const nameLower = name.toLowerCase().trim();
+  
+  const isTestEmail = TEST_EMAIL_PATTERNS.some(pattern => pattern.test(emailLower));
+  const isTestName = TEST_NAME_PATTERNS.some(pattern => nameLower === pattern.trim());
+  const isCommonTestName = nameLower === 'john smith' || nameLower === 'jane doe';
+  
+  return isTestEmail || isTestName || isCommonTestName;
+}
+
+/**
+ * Formats phone number to international format
+ * @param {string} phone - Raw phone number
+ * @returns {string} Formatted phone number with country code
+ */
+function formatPhoneNumber(phone) {
+  let formattedPhone = phone.trim();
+  
+  if (!formattedPhone.startsWith('+')) {
+    // If it's a 10-digit number, assume it's US/Canada and add +1
+    if (/^\d{10}$/.test(formattedPhone)) {
+      formattedPhone = '+1' + formattedPhone;
+    } else {
+      // Otherwise, just add +
+      formattedPhone = '+' + formattedPhone;
+    }
+  }
+  
+  return formattedPhone;
+}
+
+/**
+ * Checks for existing lead in Supabase by email
+ * @param {Object} supabase - Supabase client instance
+ * @param {string} email - Email to check
+ * @returns {Promise<string|null>} Lead ID if found, null otherwise
+ */
+async function findExistingLead(supabase, email) {
+  try {
+    const { data: existingLead, error: checkError } = await retryOperation(async () => {
+      return await supabase
+        .from('course_leads')
+        .select('id, paid')
+        .eq('email', email.toLowerCase())
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    }, 3, 1000);
+
+    if (checkError) {
+      logger.warn('Error checking for existing lead', { error: checkError.message });
+      return null;
+    }
+
+    if (existingLead) {
+      logger.info('Existing lead found', { 
+        email, 
+        leadId: existingLead.id,
+        paid: existingLead.paid 
+      });
+      return existingLead.id;
+    }
+
+    return null;
+  } catch (error) {
+    logger.warn('Failed to check for duplicate', { error: error.message });
+    return null;
+  }
+}
+
+/**
+ * Inserts a new lead into Supabase
+ * @param {Object} supabase - Supabase client instance
+ * @param {Object} lead - Lead data to insert
+ * @returns {Promise<string|null>} Lead ID if successful, null otherwise
+ */
+async function insertLead(supabase, lead) {
+  const formattedPhone = formatPhoneNumber(lead.phone);
+  
+  const insertData = {
+    name: lead.name.trim(),
+    email: lead.email.toLowerCase().trim(),
+    phone: formattedPhone,
+    paid: lead.paid
+  };
+  
+  logger.debug('Attempting to insert lead into Supabase', { 
+    name: insertData.name, 
+    email: insertData.email,
+    phone: insertData.phone 
+  });
+  
+  try {
+    const { data, error } = await retryOperation(async () => {
+      return await supabase
+        .from('course_leads')
+        .insert([insertData])
+        .select('id')
+        .single();
+    }, 3, 1000);
+
+    if (error) {
+      // Handle duplicate email error
+      if (error.code === '23505' || error.message?.includes('duplicate') || error.message?.includes('unique')) {
+        logger.warn('Duplicate email detected during insert', { email: lead.email });
+        const existingId = await findExistingLead(supabase, lead.email);
+        if (existingId) {
+          return existingId;
+        }
+        throw new Error('Duplicate email detected but could not retrieve existing record');
+      }
+      throw error;
+    }
+
+    logger.info('New lead created successfully', { leadId: data?.id || null });
+    return data?.id || null;
+  } catch (error) {
+    logger.error('Failed to insert lead into Supabase', { 
+      error: error.message,
+      errorCode: error.code,
+      errorDetails: error.details || error.hint,
+      email: lead.email
+    });
+    
+    // Final retry attempt
+    try {
+      const { data: retryData, error: retryError } = await retryOperation(async () => {
+        return await supabase
+          .from('course_leads')
+          .insert([insertData])
+          .select('id')
+          .single();
+      }, 2, 2000);
+      
+      if (retryError) {
+        logger.error('Supabase retry also failed', { 
+          error: retryError.message,
+          email: lead.email 
+        });
+        return null;
+      }
+      
+      logger.info('Supabase insert succeeded on retry', { leadId: retryData?.id || null });
+      return retryData?.id || null;
+    } catch (retryError) {
+      logger.error('Supabase retry exception', { 
+        error: retryError.message,
+        email: lead.email 
+      });
+      return null;
+    }
+  }
+}
+
+/**
+ * Creates Stripe checkout session for course enrollment
+ * @param {Object} lead - Lead data
+ * @param {string|null} leadRecordId - Supabase lead ID (optional)
+ * @param {string|null} googleSheetsRowId - Google Sheets row ID (optional)
+ * @param {Array<string>} storageBackends - Array of storage backends used (optional)
+ * @returns {Promise<Object>} Stripe checkout session
+ */
+async function createCheckoutSession(lead, leadRecordId, googleSheetsRowId = null, storageBackends = []) {
+  if (!process.env.STRIPE_PRICE_ID) {
+    throw new Error('STRIPE_PRICE_ID missing');
+  }
+
+  if (!process.env.FRONTEND_URL) {
+    throw new Error('FRONTEND_URL missing');
+  }
+
+  const checkoutPayload = {
+    mode: 'payment',
+    line_items: [
+      {
+        price: process.env.STRIPE_PRICE_ID,
+        quantity: 1,
+      },
+    ],
+    customer_email: lead.email,
+    // Collect billing address - helps reduce declines and fraud
+    billing_address_collection: 'required',
+    // Collect phone number - required for 3D Secure OTP verification
+    phone_number_collection: {
+      enabled: true,
+    },
+    // Let Stripe auto-detect payment methods for maximum acceptance
+    // Stripe will show all eligible methods based on currency and location
+    // This maximizes payment acceptance rate
+    payment_method_types: ['card', 'amazon_pay'],
+    payment_method_options: {
+      card: {
+        // Automatic 3DS - only requests when required by issuer
+        // This maximizes acceptance while maintaining security
+        request_three_d_secure: 'automatic',
+      },
+    },
+    // Enable promotion codes for discounts
+    allow_promotion_codes: true,
+    // Automatic invoice creation and email sending
+    invoice_creation: {
+      enabled: true,
+    },
+    // Payment intent data for better acceptance
+    payment_intent_data: {
+      // Capture method - automatic for immediate capture
+      capture_method: 'automatic',
+      // Description for customer clarity
+      description: 'Pro Trader Course - 3-Month Trading Program',
+      // Metadata for tracking
+      metadata: {
+        course_lead_id: leadRecordId || '',
+        lead_email: lead.email,
+        lead_phone: lead.phone,
+        lead_name: lead.name,
+        source: 'course_enrollment',
+      },
+    },
+    success_url: `${process.env.FRONTEND_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${process.env.FRONTEND_URL}/join-course`,
+    metadata: {
+      course_lead_id: leadRecordId || '',
+      google_sheets_row_id: googleSheetsRowId || '',
+      lead_email: lead.email,
+      lead_phone: lead.phone,
+      lead_name: lead.name,
+      storage_backend: storageBackends.join(',') || 'none',
+      form_data: JSON.stringify({
+        name: lead.name,
+        email: lead.email,
+        phone: lead.phone
+      })
+    },
+  };
+
+  if (process.env.STRIPE_PAYMENT_METHOD_CONFIGURATION_ID) {
+    checkoutPayload.payment_method_configuration = process.env.STRIPE_PAYMENT_METHOD_CONFIGURATION_ID;
+  }
+
+  return await stripe.checkout.sessions.create(checkoutPayload);
+}
+
+/**
+ * Join course endpoint handler
+ * Validates input, saves lead to Supabase, and creates Stripe checkout session
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
+exports.joinCourse = async (req, res) => {
+  try {
+    const payload = req.body || {};
+
+    const validations = [
+      { key: 'name', result: validateName(payload.name) },
+      { key: 'email', result: validateEmail(payload.email) },
+      { key: 'phone', result: validatePhone(payload.phone) }
+    ];
+
+    const errors = validations
+      .filter((item) => !item.result.valid)
+      .map((item) => item.result.error);
+
+    if (errors.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors,
+      });
+    }
+
+    const lead = {
+      name: validations.find((v) => v.key === 'name').result.value,
+      email: validations.find((v) => v.key === 'email').result.value,
+      phone: validations.find((v) => v.key === 'phone').result.value,
+      paid: false,
+    };
+
+    // Prevent test data from being saved
+    if (isTestData(lead.email, lead.name)) {
+      logger.warn('Test data submission blocked', { email: lead.email, name: lead.name });
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid submission. Please use a valid email address.',
+      });
+    }
+
+    // Determine which storage backend to use
+    const useSupabase = isSupabaseConfigured();
+    const useGoogleSheets = isGoogleSheetsConfigured();
+    const storageBackend = process.env.FORM_STORAGE_BACKEND || 'auto'; // 'supabase', 'google_sheets', 'both', or 'auto'
+
+    if (!useSupabase && !useGoogleSheets) {
+      logger.error('No storage backend configured for course enrollment');
+      return res.status(500).json({
+        success: false,
+        message: 'Enrollment storage is not configured yet. Please contact support.',
+      });
+    }
+
+    // Initialize Google Sheets headers if using Google Sheets
+    if (useGoogleSheets && (storageBackend === 'google_sheets' || storageBackend === 'both' || storageBackend === 'auto')) {
+      await initializeGoogleSheets().catch(err => {
+        logger.warn('Failed to initialize Google Sheets headers', { error: err.message });
+      });
+    }
+
+    let leadRecordId = null;
+    let googleSheetsRowId = null;
+    const storageBackends = [];
+
+    // OPTIMIZED: Save data in parallel for faster response
+    // Run both saves simultaneously, wait max 1.5 seconds, then proceed to payment
+    const savePromises = [];
+
+    // Save to Supabase if configured and selected
+    if (useSupabase && (storageBackend === 'supabase' || storageBackend === 'both' || storageBackend === 'auto')) {
+      const supabasePromise = (async () => {
+        try {
+          const supabase = getSupabaseClient();
+          const existingId = await findExistingLead(supabase, lead.email);
+          
+          if (!existingId) {
+            const newId = await insertLead(supabase, lead);
+            return { type: 'supabase', id: newId };
+          }
+          return { type: 'supabase', id: existingId };
+        } catch (error) {
+          logger.warn('Supabase save failed, continuing', { error: error.message });
+          return { type: 'supabase', id: null };
+        }
+      })();
+      savePromises.push(supabasePromise);
+    }
+
+    // Save to Google Sheets if configured and selected (ALWAYS save when configured, not just as backup)
+    // Skip duplicate check to avoid lag - just save directly for faster response
+    if (useGoogleSheets && (storageBackend === 'google_sheets' || storageBackend === 'both' || storageBackend === 'auto')) {
+      const sheetsPromise = (async () => {
+        try {
+          // Direct save without duplicate check for faster response
+          const rowId = await saveLeadToSheets(lead);
+          return { type: 'sheets', id: rowId };
+        } catch (error) {
+          logger.warn('Google Sheets save failed, continuing', { error: error.message });
+          return { type: 'sheets', id: null };
+        }
+      })();
+      savePromises.push(sheetsPromise);
+    }
+
+    // Wait for saves with timeout - don't block payment flow too long
+    // Give saves 1.5 seconds max, then proceed to payment (data will continue saving in background)
+    if (savePromises.length > 0) {
+      try {
+        const results = await Promise.race([
+          Promise.allSettled(savePromises),
+          new Promise(resolve => setTimeout(() => resolve([]), 1500))
+        ]);
+
+        // Process results
+        if (Array.isArray(results) && results.length > 0) {
+          results.forEach(result => {
+            if (result && result.status === 'fulfilled' && result.value) {
+              const { type, id } = result.value;
+              if (type === 'supabase' && id) {
+                leadRecordId = id;
+                storageBackends.push('supabase');
+              } else if (type === 'sheets' && id) {
+                googleSheetsRowId = id;
+                storageBackends.push('google_sheets');
+              }
+            }
+          });
+        }
+      } catch (error) {
+        // Ignore errors - data will continue saving in background, payment proceeds
+        logger.debug('Data save timeout, proceeding to payment', { error: error.message });
+      }
+    }
+
+    // Log storage status
+    logger.info('Lead storage initiated', {
+      email: lead.email,
+      supabaseId: leadRecordId || 'pending',
+      googleSheetsRowId: googleSheetsRowId || 'pending',
+      storageBackends: storageBackends.join(', ') || 'pending',
+    });
+    
+    // Create Stripe checkout session IMMEDIATELY
+    // Payment flow is priority - data saves continue in background
+    const startTime = Date.now();
+    
+    let session;
+    try {
+      session = await createCheckoutSession(lead, leadRecordId, googleSheetsRowId, storageBackends);
+    } catch (error) {
+      if (error.message === 'STRIPE_PRICE_ID missing' || error.message === 'FRONTEND_URL missing') {
+        logger.error('Configuration error', { error: error.message });
+        return res.status(500).json({
+          success: false,
+          message: error.message === 'STRIPE_PRICE_ID missing' 
+            ? 'Stripe price is not configured on the server.'
+            : 'Frontend URL not configured',
+        });
+      }
+      
+      logger.error('Stripe checkout session creation failed', {
+        error: error.message,
+        errorType: error.type,
+        errorCode: error.code,
+        errorStatus: error.statusCode,
+        leadId: leadRecordId,
+        email: lead.email,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
+      
+      // Provide more specific error message in development
+      const errorMessage = process.env.NODE_ENV === 'development' 
+        ? `Payment system error: ${error.message} (${error.type || 'Unknown'})`
+        : 'Payment system temporarily unavailable. Please try again in a moment.';
+      
+      return res.status(502).json({
+        success: false,
+        message: errorMessage,
+        ...(process.env.NODE_ENV === 'development' && { 
+          error: error.message,
+          errorType: error.type,
+          errorCode: error.code 
+        }),
+      });
+    }
+    
+    const responseTime = Date.now() - startTime;
+    
+    logger.info('Course join checkout session created', {
+      sessionId: session.id,
+      leadId: leadRecordId,
+      responseTimeMs: responseTime,
+      email: lead.email,
+    });
+
+    return res.status(201).json({
+      success: true,
+      checkoutUrl: session.url,
+      sessionId: session.id,
+    });
+  } catch (error) {
+    logger.error('Course join flow failed', {
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+    });
+    return res.status(500).json({
+      success: false,
+      message: 'Unable to process enrollment. Please retry shortly.',
+    });
+  }
+};
+

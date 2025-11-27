@@ -14,17 +14,18 @@ const { validateName, validateEmail, validatePhone } = require('../utils/validat
  * @type {RegExp[]}
  */
 const TEST_EMAIL_PATTERNS = [
-  /test\d+@example\.com/i,
-  /test\d+@test\.com/i,
-  /loadtest\d+.*@test\.com/i,
-  /dbtest\d+@verification\.com/i,
-  /realuser\d+@test\.com/i,
-  /final\d+@test\.com/i,
-  /.*test.*@.*test\.com/i,
-  /.*test.*@example\.com/i,
-  /test.*@.*\.com/i,
-  /.*@test\.com/i,
-  /.*@example\.com/i
+  /^test\d+@example\.com$/i,
+  /^test\d+@test\.com$/i,
+  /^loadtest\d+.*@test\.com$/i,
+  /^dbtest\d+@verification\.com$/i,
+  /^realuser\d+@test\.com$/i,
+  /^final\d+@test\.com$/i,
+  /^.*test.*@.*test\.com$/i,
+  /^.*test.*@example\.com$/i,
+  /^test.*@test\.com$/i,
+  /^.*@test\.com$/i,
+  // Only block example.com if it's clearly test data (not all example.com emails)
+  /^test.*@example\.com$/i
 ];
 
 /**
@@ -49,14 +50,32 @@ const TEST_NAME_PATTERNS = [
  * @returns {boolean} True if test data should be blocked
  */
 function isTestData(email, name) {
-  const emailLower = email.toLowerCase();
+  const emailLower = email.toLowerCase().trim();
   const nameLower = name.toLowerCase().trim();
   
+  // Only block if email clearly matches test patterns (more specific)
   const isTestEmail = TEST_EMAIL_PATTERNS.some(pattern => pattern.test(emailLower));
-  const isTestName = TEST_NAME_PATTERNS.some(pattern => nameLower === pattern.trim());
-  const isCommonTestName = nameLower === 'john smith' || nameLower === 'jane doe';
   
-  return isTestEmail || isTestName || isCommonTestName;
+  // Only block exact test name matches
+  const isTestName = TEST_NAME_PATTERNS.some(pattern => nameLower === pattern.trim());
+  
+  // Only block if BOTH email and name are test patterns (less aggressive)
+  // This prevents false positives from legitimate users
+  if (isTestEmail && isTestName) {
+    return true;
+  }
+  
+  // Block if email is clearly test pattern
+  if (isTestEmail) {
+    return true;
+  }
+  
+  // Block if name is clearly test pattern AND email looks suspicious
+  if (isTestName && (emailLower.includes('test') || emailLower.includes('example'))) {
+    return true;
+  }
+  
+  return false;
 }
 
 /**
@@ -82,9 +101,10 @@ function formatPhoneNumber(phone) {
 
 /**
  * Checks for existing lead in Supabase by email
+ * Returns lead ID only if they haven't paid yet (allows retry for failed payments)
  * @param {Object} supabase - Supabase client instance
  * @param {string} email - Email to check
- * @returns {Promise<string|null>} Lead ID if found, null otherwise
+ * @returns {Promise<{id: string|null, hasPaid: boolean}>} Lead info if found
  */
 async function findExistingLead(supabase, email) {
   try {
@@ -100,22 +120,28 @@ async function findExistingLead(supabase, email) {
 
     if (checkError) {
       logger.warn('Error checking for existing lead', { error: checkError.message });
-      return null;
+      return { id: null, hasPaid: false };
     }
 
     if (existingLead) {
+      const hasPaid = existingLead.paid === true;
       logger.info('Existing lead found', { 
         email, 
         leadId: existingLead.id,
-        paid: existingLead.paid 
+        paid: existingLead.paid,
+        allowRetry: !hasPaid
       });
-      return existingLead.id;
+      // Return ID only if they haven't paid (allows retry for failed payments)
+      return { 
+        id: hasPaid ? null : existingLead.id, 
+        hasPaid 
+      };
     }
 
-    return null;
+    return { id: null, hasPaid: false };
   } catch (error) {
     logger.warn('Failed to check for duplicate', { error: error.message });
-    return null;
+    return { id: null, hasPaid: false };
   }
 }
 
@@ -151,14 +177,34 @@ async function insertLead(supabase, lead) {
     }, 3, 1000);
 
     if (error) {
-      // Handle duplicate email error
+      // Handle duplicate email error - always allow retry if payment hasn't been completed
       if (error.code === '23505' || error.message?.includes('duplicate') || error.message?.includes('unique')) {
-        logger.warn('Duplicate email detected during insert', { email: lead.email });
-        const existingId = await findExistingLead(supabase, lead.email);
-        if (existingId) {
-          return existingId;
+        logger.info('Duplicate email detected during insert - checking payment status', { email: lead.email });
+        const existingLead = await findExistingLead(supabase, lead.email);
+        
+        // Always allow retry if they haven't paid (payment may have failed)
+        if (existingLead.id && !existingLead.hasPaid) {
+          logger.info('Reusing existing unpaid lead for payment retry', { 
+            email: lead.email, 
+            leadId: existingLead.id 
+          });
+          return existingLead.id;
         }
-        throw new Error('Duplicate email detected but could not retrieve existing record');
+        
+        // If they've already paid, still return the existing ID to allow them to proceed
+        // This handles edge cases where payment status might not be updated correctly
+        if (existingLead.id) {
+          logger.info('Existing lead found (paid status: ' + existingLead.hasPaid + ') - allowing checkout', { 
+            email: lead.email, 
+            leadId: existingLead.id,
+            hasPaid: existingLead.hasPaid
+          });
+          return existingLead.id;
+        }
+        
+        // If no existing lead found but duplicate error occurred, log and return null
+        logger.warn('Duplicate error but no existing lead found', { email: lead.email });
+        return null;
       }
       throw error;
     }
@@ -204,6 +250,67 @@ async function insertLead(supabase, lead) {
 }
 
 /**
+ * Retry wrapper for Stripe API calls with exponential backoff
+ * @param {Function} operation - Async function to retry
+ * @param {number} maxRetries - Maximum number of retry attempts
+ * @param {number} baseDelay - Base delay in milliseconds
+ * @returns {Promise<any>} Result of the operation
+ */
+async function retryStripeOperation(operation, maxRetries = 3, baseDelay = 1000) {
+  let lastError = null;
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      const isLastAttempt = attempt === maxRetries - 1;
+      
+      // Check if it's a retryable Stripe error
+      const isRetryableError = 
+        error.type === 'StripeAPIError' ||
+        error.type === 'StripeConnectionError' ||
+        error.type === 'StripeRateLimitError' ||
+        error.code === 'rate_limit' ||
+        error.statusCode === 429 ||
+        error.statusCode === 500 ||
+        error.statusCode === 502 ||
+        error.statusCode === 503 ||
+        (error.message && (
+          error.message.includes('timeout') ||
+          error.message.includes('network') ||
+          error.message.includes('ECONNRESET') ||
+          error.message.includes('ETIMEDOUT')
+        ));
+      
+      if (isLastAttempt || !isRetryableError) {
+        if (!isRetryableError) {
+          logger.warn('Non-retryable Stripe error', { 
+            error: error.message,
+            errorType: error.type,
+            attempt: attempt + 1
+          });
+        }
+        throw error;
+      }
+      
+      const delay = baseDelay * Math.pow(2, attempt);
+      logger.warn('Stripe operation failed, retrying', { 
+        attempt: attempt + 1, 
+        maxRetries,
+        delay,
+        error: error.message,
+        errorType: error.type,
+        errorCode: error.code
+      });
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  throw lastError || new Error('Stripe operation failed after retries');
+}
+
+/**
  * Creates Stripe checkout session for course enrollment
  * @param {Object} lead - Lead data
  * @param {string|null} leadRecordId - Supabase lead ID (optional)
@@ -235,10 +342,11 @@ async function createCheckoutSession(lead, leadRecordId, googleSheetsRowId = nul
     phone_number_collection: {
       enabled: true,
     },
-    // Let Stripe auto-detect payment methods for maximum acceptance
-    // Stripe will show all eligible methods based on currency and location
-    // This maximizes payment acceptance rate
-    payment_method_types: ['card', 'amazon_pay'],
+    // OPTIMIZED: Remove payment method restrictions to maximize acceptance
+    // Let Stripe auto-detect all eligible payment methods based on currency and location
+    // This enables: Card, UPI (for INR/India), Google Pay (auto-enabled with cards), Amazon Pay, Link, etc.
+    // Removing payment_method_types restriction allows Stripe to show all available methods
+    // This significantly improves payment acceptance rate
     payment_method_options: {
       card: {
         // Automatic 3DS - only requests when required by issuer
@@ -252,19 +360,27 @@ async function createCheckoutSession(lead, leadRecordId, googleSheetsRowId = nul
     invoice_creation: {
       enabled: true,
     },
-    // Payment intent data for better acceptance
+    // OPTIMIZED: Enhanced payment intent data for better acceptance
     payment_intent_data: {
       // Capture method - automatic for immediate capture
       capture_method: 'automatic',
-      // Description for customer clarity
+      // Clear description for customer and bank recognition
       description: 'Pro Trader Course - 3-Month Trading Program',
-      // Metadata for tracking
+      // Statement descriptor - appears on bank statement (max 22 chars)
+      // Clear descriptor helps reduce "do not honor" declines
+      statement_descriptor: 'SILENT EQUITY COURSE',
+      // Enhanced metadata for better risk assessment and fraud detection
       metadata: {
         course_lead_id: leadRecordId || '',
         lead_email: lead.email,
         lead_phone: lead.phone,
         lead_name: lead.name,
         source: 'course_enrollment',
+        customer_name: lead.name,
+        customer_email: lead.email,
+        customer_phone: lead.phone,
+        product_type: 'course',
+        product_name: 'Pro Trader Course',
       },
     },
     success_url: `${process.env.FRONTEND_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
@@ -288,7 +404,10 @@ async function createCheckoutSession(lead, leadRecordId, googleSheetsRowId = nul
     checkoutPayload.payment_method_configuration = process.env.STRIPE_PAYMENT_METHOD_CONFIGURATION_ID;
   }
 
-  return await stripe.checkout.sessions.create(checkoutPayload);
+  // Wrap Stripe API call with retry logic for better reliability
+  return await retryStripeOperation(async () => {
+    return await stripe.checkout.sessions.create(checkoutPayload);
+  }, 3, 1000);
 }
 
 /**
@@ -326,12 +445,13 @@ exports.joinCourse = async (req, res) => {
       paid: false,
     };
 
-    // Prevent test data from being saved
+    // Prevent test data from being saved (less aggressive filtering)
     if (isTestData(lead.email, lead.name)) {
       logger.warn('Test data submission blocked', { email: lead.email, name: lead.name });
       return res.status(400).json({
         success: false,
-        message: 'Invalid submission. Please use a valid email address.',
+        message: 'Please use a valid email address and name for enrollment.',
+        errors: ['Invalid email or name format detected. Please use your real information.']
       });
     }
 
@@ -360,7 +480,7 @@ exports.joinCourse = async (req, res) => {
     const storageBackends = [];
 
     // OPTIMIZED: Save data in parallel for faster response
-    // Run both saves simultaneously, wait max 1.5 seconds, then proceed to payment
+    // Run both saves simultaneously, wait max 1 second, then proceed to payment
     const savePromises = [];
 
     // Save to Supabase if configured and selected
@@ -368,13 +488,22 @@ exports.joinCourse = async (req, res) => {
       const supabasePromise = (async () => {
         try {
           const supabase = getSupabaseClient();
-          const existingId = await findExistingLead(supabase, lead.email);
+          const existingLead = await findExistingLead(supabase, lead.email);
           
-          if (!existingId) {
-            const newId = await insertLead(supabase, lead);
-            return { type: 'supabase', id: newId };
+          // Only reuse existing ID if they haven't paid (allows retry for failed payments)
+          // If they've paid, create a new record to allow re-registration
+          // If no existing lead, create new one
+          if (existingLead.id && !existingLead.hasPaid) {
+            logger.info('Reusing existing lead for payment retry', { 
+              email: lead.email, 
+              leadId: existingLead.id 
+            });
+            return { type: 'supabase', id: existingLead.id };
           }
-          return { type: 'supabase', id: existingId };
+          
+          // Create new lead (either no existing lead, or they've already paid)
+          const newId = await insertLead(supabase, lead);
+          return { type: 'supabase', id: newId };
         } catch (error) {
           logger.warn('Supabase save failed, continuing', { error: error.message });
           return { type: 'supabase', id: null };
@@ -400,12 +529,13 @@ exports.joinCourse = async (req, res) => {
     }
 
     // Wait for saves with timeout - don't block payment flow too long
-    // Give saves 1.5 seconds max, then proceed to payment (data will continue saving in background)
+    // Give saves 1 second max, then proceed to payment (data will continue saving in background)
+    // Reduced from 1.5s to 1s for faster response
     if (savePromises.length > 0) {
       try {
         const results = await Promise.race([
           Promise.allSettled(savePromises),
-          new Promise(resolve => setTimeout(() => resolve([]), 1500))
+          new Promise(resolve => setTimeout(() => resolve([]), 1000))
         ]);
 
         // Process results
@@ -437,7 +567,7 @@ exports.joinCourse = async (req, res) => {
       storageBackends: storageBackends.join(', ') || 'pending',
     });
     
-    // Create Stripe checkout session IMMEDIATELY
+    // Create Stripe checkout session IMMEDIATELY with retry logic
     // Payment flow is priority - data saves continue in background
     const startTime = Date.now();
     
@@ -455,7 +585,7 @@ exports.joinCourse = async (req, res) => {
         });
       }
       
-      logger.error('Stripe checkout session creation failed', {
+      logger.error('Stripe checkout session creation failed after retries', {
         error: error.message,
         errorType: error.type,
         errorCode: error.code,
@@ -465,10 +595,16 @@ exports.joinCourse = async (req, res) => {
         stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
       });
       
-      // Provide more specific error message in development
-      const errorMessage = process.env.NODE_ENV === 'development' 
-        ? `Payment system error: ${error.message} (${error.type || 'Unknown'})`
-        : 'Payment system temporarily unavailable. Please try again in a moment.';
+      // Provide more specific error message based on error type
+      let errorMessage = 'Payment system temporarily unavailable. Please try again in a moment.';
+      
+      if (error.type === 'StripeRateLimitError' || error.code === 'rate_limit' || error.statusCode === 429) {
+        errorMessage = 'Payment system is busy. Please try again in a few moments.';
+      } else if (error.type === 'StripeInvalidRequestError') {
+        errorMessage = 'Invalid payment request. Please check your information and try again.';
+      } else if (process.env.NODE_ENV === 'development') {
+        errorMessage = `Payment system error: ${error.message} (${error.type || 'Unknown'})`;
+      }
       
       return res.status(502).json({
         success: false,
@@ -506,4 +642,3 @@ exports.joinCourse = async (req, res) => {
     });
   }
 };
-

@@ -235,58 +235,58 @@ async function saveLeadToSheets(lead) {
 
   // Use API method (if configured)
   if (isGoogleSheetsApiConfigured()) {
-    try {
-      const sheets = getGoogleSheetsClient();
-      const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
-      const sheetName = process.env.GOOGLE_SHEETS_SHEET_NAME || 'Sheet1';
+  try {
+    const sheets = getGoogleSheetsClient();
+    const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+    const sheetName = process.env.GOOGLE_SHEETS_SHEET_NAME || 'Sheet1';
 
-      // Format phone number
-      let formattedPhone = lead.phone.trim();
-      if (!formattedPhone.startsWith('+')) {
-        if (/^\d{10}$/.test(formattedPhone)) {
-          formattedPhone = '+1' + formattedPhone;
-        } else {
-          formattedPhone = '+' + formattedPhone;
-        }
+    // Format phone number
+    let formattedPhone = lead.phone.trim();
+    if (!formattedPhone.startsWith('+')) {
+      if (/^\d{10}$/.test(formattedPhone)) {
+        formattedPhone = '+1' + formattedPhone;
+      } else {
+        formattedPhone = '+' + formattedPhone;
       }
+    }
 
-      // Prepare row data: [Timestamp, Name, Email, Phone, Paid Status]
-      const rowData = [
-        new Date().toISOString(), // Timestamp
-        lead.name.trim(), // Name
-        lead.email.toLowerCase().trim(), // Email
-        formattedPhone, // Phone
-        lead.paid ? 'Yes' : 'No', // Paid Status
-      ];
+    // Prepare row data: [Timestamp, Name, Email, Phone, Paid Status]
+    const rowData = [
+      new Date().toISOString(), // Timestamp
+      lead.name.trim(), // Name
+      lead.email.toLowerCase().trim(), // Email
+      formattedPhone, // Phone
+      lead.paid ? 'Yes' : 'No', // Paid Status
+    ];
 
-      // Append row to sheet
-      const response = await sheets.spreadsheets.values.append({
-        spreadsheetId,
-        range: `${sheetName}!A:E`, // Columns A-E
-        valueInputOption: 'USER_ENTERED',
-        insertDataOption: 'INSERT_ROWS',
-        resource: {
-          values: [rowData],
-        },
-      });
+    // Append row to sheet
+    const response = await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetName}!A:E`, // Columns A-E
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      resource: {
+        values: [rowData],
+      },
+    });
 
-      const updatedRange = response.data.updates?.updatedRange;
-      const rowNumber = updatedRange ? updatedRange.match(/!A(\d+)/)?.[1] : null;
+    const updatedRange = response.data.updates?.updatedRange;
+    const rowNumber = updatedRange ? updatedRange.match(/!A(\d+)/)?.[1] : null;
 
       logger.info('Lead saved to Google Sheets via API', {
-        rowNumber,
-        email: lead.email,
-        sheetName,
-      });
+      rowNumber,
+      email: lead.email,
+      sheetName,
+    });
 
-      return rowNumber || null;
-    } catch (error) {
+    return rowNumber || null;
+  } catch (error) {
       logger.error('Failed to save lead to Google Sheets via API', {
-        error: error.message,
-        email: lead.email,
-      });
-      return null;
-    }
+      error: error.message,
+      email: lead.email,
+    });
+    return null;
+  }
   }
 
   return null;
@@ -312,47 +312,47 @@ async function findExistingLeadInSheets(email) {
 
   // Use API method for duplicate checking
   if (isGoogleSheetsApiConfigured()) {
-    try {
-      const sheets = getGoogleSheetsClient();
-      const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
-      const sheetName = process.env.GOOGLE_SHEETS_SHEET_NAME || 'Sheet1';
+  try {
+    const sheets = getGoogleSheetsClient();
+    const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+    const sheetName = process.env.GOOGLE_SHEETS_SHEET_NAME || 'Sheet1';
 
-      // Read all data from sheet
-      const response = await sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range: `${sheetName}!A:E`,
-      });
+    // Read all data from sheet
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:E`,
+    });
 
-      const rows = response.data.values || [];
-      
-      // Skip header row if exists
-      const dataRows = rows.length > 0 && rows[0][0]?.toLowerCase().includes('timestamp') 
-        ? rows.slice(1) 
-        : rows;
+    const rows = response.data.values || [];
+    
+    // Skip header row if exists
+    const dataRows = rows.length > 0 && rows[0][0]?.toLowerCase().includes('timestamp') 
+      ? rows.slice(1) 
+      : rows;
 
-      // Find row with matching email (column C, index 2)
-      const emailLower = email.toLowerCase().trim();
-      for (let i = 0; i < dataRows.length; i++) {
-        if (dataRows[i][2]?.toLowerCase().trim() === emailLower) {
-          const rowNumber = rows.length > 0 && rows[0][0]?.toLowerCase().includes('timestamp') 
-            ? i + 2 
-            : i + 1;
-          logger.info('Existing lead found in Google Sheets', { 
-            email, 
-            rowNumber 
-          });
-          return rowNumber.toString();
-        }
+    // Find row with matching email (column C, index 2)
+    const emailLower = email.toLowerCase().trim();
+    for (let i = 0; i < dataRows.length; i++) {
+      if (dataRows[i][2]?.toLowerCase().trim() === emailLower) {
+        const rowNumber = rows.length > 0 && rows[0][0]?.toLowerCase().includes('timestamp') 
+          ? i + 2 
+          : i + 1;
+        logger.info('Existing lead found in Google Sheets', { 
+          email, 
+          rowNumber 
+        });
+        return rowNumber.toString();
       }
-
-      return null;
-    } catch (error) {
-      logger.warn('Failed to check Google Sheets for existing lead', {
-        error: error.message,
-        email,
-      });
-      return null;
     }
+
+    return null;
+  } catch (error) {
+    logger.warn('Failed to check Google Sheets for existing lead', {
+      error: error.message,
+      email,
+    });
+    return null;
+  }
   }
 
   return null;
@@ -376,37 +376,37 @@ async function initializeGoogleSheets() {
 
   // Use API method for header initialization
   if (isGoogleSheetsApiConfigured()) {
-    try {
-      const sheets = getGoogleSheetsClient();
-      const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
-      const sheetName = process.env.GOOGLE_SHEETS_SHEET_NAME || 'Sheet1';
+  try {
+    const sheets = getGoogleSheetsClient();
+    const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+    const sheetName = process.env.GOOGLE_SHEETS_SHEET_NAME || 'Sheet1';
 
-      // Check if sheet has data
-      const response = await sheets.spreadsheets.values.get({
+    // Check if sheet has data
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A1:E1`,
+    });
+
+    const hasHeaders = response.data.values && response.data.values.length > 0;
+
+    if (!hasHeaders) {
+      // Add header row
+      await sheets.spreadsheets.values.update({
         spreadsheetId,
         range: `${sheetName}!A1:E1`,
+        valueInputOption: 'USER_ENTERED',
+        resource: {
+          values: [['Timestamp', 'Name', 'Email', 'Phone', 'Paid']],
+        },
       });
 
-      const hasHeaders = response.data.values && response.data.values.length > 0;
-
-      if (!hasHeaders) {
-        // Add header row
-        await sheets.spreadsheets.values.update({
-          spreadsheetId,
-          range: `${sheetName}!A1:E1`,
-          valueInputOption: 'USER_ENTERED',
-          resource: {
-            values: [['Timestamp', 'Name', 'Email', 'Phone', 'Paid']],
-          },
-        });
-
-        logger.info('Google Sheets initialized with headers', { sheetName });
-      }
-    } catch (error) {
-      logger.warn('Failed to initialize Google Sheets headers', {
-        error: error.message,
-      });
-      // Don't throw - sheet might already have headers
+      logger.info('Google Sheets initialized with headers', { sheetName });
+    }
+  } catch (error) {
+    logger.warn('Failed to initialize Google Sheets headers', {
+      error: error.message,
+    });
+    // Don't throw - sheet might already have headers
     }
   }
 }
